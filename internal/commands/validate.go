@@ -62,14 +62,20 @@ func runValidate(cmd *cobra.Command, args []string, all bool) error {
 	var invalidSkills int
 	for _, result := range results {
 		if len(result.Issues) == 0 {
-			fmt.Fprintf(out, "ok %s\n", result.Name)
+			if _, err := fmt.Fprintf(out, "ok %s\n", result.Name); err != nil {
+				return err
+			}
 			continue
 		}
 
 		invalidSkills++
-		fmt.Fprintf(out, "invalid %s\n", result.Name)
+		if _, err := fmt.Fprintf(out, "invalid %s\n", result.Name); err != nil {
+			return err
+		}
 		for _, issue := range result.Issues {
-			fmt.Fprintf(out, "error %s %s\n", issue.Rule, issue.Message)
+			if _, err := fmt.Fprintf(out, "error %s %s\n", issue.Rule, issue.Message); err != nil {
+				return err
+			}
 		}
 	}
 

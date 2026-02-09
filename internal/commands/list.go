@@ -40,7 +40,9 @@ func runList(cmd *cobra.Command, projectOnly bool) error {
 		}
 
 		for _, skill := range discovered {
-			fmt.Fprintln(out, skill.Name)
+			if _, err := fmt.Fprintln(out, skill.Name); err != nil {
+				return err
+			}
 		}
 		return nil
 	}
@@ -56,7 +58,9 @@ func runList(cmd *cobra.Command, projectOnly bool) error {
 	}
 
 	for _, entry := range linked {
-		fmt.Fprintln(out, entry.Name)
+		if _, err := fmt.Fprintln(out, entry.Name); err != nil {
+			return err
+		}
 	}
 	return nil
 }

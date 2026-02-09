@@ -37,8 +37,12 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	out := cmd.OutOrStdout()
-	fmt.Fprintf(out, "project %s\n", report.ProjectSkillsDir)
-	fmt.Fprintf(out, "global %s\n", report.GlobalSkillsDir)
+	if _, err := fmt.Fprintf(out, "project %s\n", report.ProjectSkillsDir); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(out, "global %s\n", report.GlobalSkillsDir); err != nil {
+		return err
+	}
 
 	entries := append([]skills.StatusEntry(nil), report.Entries...)
 	sort.Slice(entries, func(i, j int) bool {
@@ -51,7 +55,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	})
 
 	for _, entry := range entries {
-		fmt.Fprintf(out, "%s %s\n", entry.Status, entry.Name)
+		if _, err := fmt.Fprintf(out, "%s %s\n", entry.Status, entry.Name); err != nil {
+			return err
+		}
 	}
 	return nil
 }
