@@ -20,11 +20,17 @@ func TestListCommandDefaultListsGlobalSkills(t *testing.T) {
 	if err := os.MkdirAll(globalSkills, 0o755); err != nil {
 		t.Fatalf("MkdirAll(globalSkills) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(globalSkills, "go"), []byte("x"), 0o644); err != nil {
-		t.Fatalf("WriteFile(go) error = %v", err)
+	if err := os.MkdirAll(filepath.Join(globalSkills, "lang", "go"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(go) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(globalSkills, "rust"), []byte("x"), 0o644); err != nil {
-		t.Fatalf("WriteFile(rust) error = %v", err)
+	if err := os.WriteFile(filepath.Join(globalSkills, "lang", "go", "SKILL.md"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go/SKILL.md) error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(globalSkills, "systems", "rust"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(rust) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(globalSkills, "systems", "rust", "SKILL.md"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile(rust/SKILL.md) error = %v", err)
 	}
 
 	prevWd, err := os.Getwd()
@@ -78,14 +84,18 @@ func TestListCommandProjectFlagListsOnlyGlobalLinks(t *testing.T) {
 	if err := os.MkdirAll(globalSkills, 0o755); err != nil {
 		t.Fatalf("MkdirAll(globalSkills) error = %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(globalSkills, "go"), []byte("x"), 0o644); err != nil {
-		t.Fatalf("WriteFile(go) error = %v", err)
+	if err := os.MkdirAll(filepath.Join(globalSkills, "lang", "go"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(go) error = %v", err)
+	}
+	globalGo := filepath.Join(globalSkills, "lang", "go")
+	if err := os.WriteFile(filepath.Join(globalGo, "SKILL.md"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go/SKILL.md) error = %v", err)
 	}
 	if err := os.WriteFile(external, []byte("x"), 0o644); err != nil {
 		t.Fatalf("WriteFile(external) error = %v", err)
 	}
 
-	if err := os.Symlink(filepath.Join(globalSkills, "go"), filepath.Join(projectSkills, "go")); err != nil {
+	if err := os.Symlink(globalGo, filepath.Join(projectSkills, "go")); err != nil {
 		t.Fatalf("Symlink(go) error = %v", err)
 	}
 	if err := os.Symlink(external, filepath.Join(projectSkills, "external")); err != nil {

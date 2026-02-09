@@ -1,6 +1,7 @@
 package commands
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -81,5 +82,75 @@ func TestResolveUnlinkTargetsBuildsOnlyFromArgs(t *testing.T) {
 	}
 	if len(none) != 0 {
 		t.Fatalf("len(resolveUnlinkTargets(nil args)) = %d, want 0", len(none))
+	}
+}
+
+func TestCompleteGlobalSkillsFindsNestedSkillMarkers(t *testing.T) {
+	tmp := t.TempDir()
+	xdgConfig := filepath.Join(tmp, "xdg")
+	globalSkills := filepath.Join(xdgConfig, "bond")
+
+	if err := os.MkdirAll(filepath.Join(globalSkills, "language", "go"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(go) error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(globalSkills, "frontend", "react"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(react) error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(globalSkills, "invalid", "python"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(python) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(globalSkills, "language", "go", "SKILL.md"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile(go/SKILL.md) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(globalSkills, "frontend", "react", "SKILL.md"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile(react/SKILL.md) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(globalSkills, "invalid", "python", "README.md"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile(python/README.md) error = %v", err)
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", xdgConfig)
+
+	candidates, directive := completeGlobalSkills(newLinkCmd(), nil, "")
+	if directive == 0 {
+		t.Fatalf("directive = %d, want non-zero no-file-completion directive", directive)
+	}
+	if len(candidates) != 2 {
+		t.Fatalf("len(candidates) = %d, want 2", len(candidates))
+	}
+	if candidates[0] != "go" {
+		t.Fatalf("candidates[0] = %q, want go", candidates[0])
+	}
+	if candidates[1] != "react" {
+		t.Fatalf("candidates[1] = %q, want react", candidates[1])
+	}
+}
+
+func TestCompleteGlobalSkillsDuplicateNamesReturnNoCandidates(t *testing.T) {
+	tmp := t.TempDir()
+	xdgConfig := filepath.Join(tmp, "xdg")
+	globalSkills := filepath.Join(xdgConfig, "bond")
+
+	if err := os.MkdirAll(filepath.Join(globalSkills, "team-a", "go"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(team-a/go) error = %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(globalSkills, "team-b", "go"), 0o755); err != nil {
+		t.Fatalf("MkdirAll(team-b/go) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(globalSkills, "team-a", "go", "SKILL.md"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile(team-a/go/SKILL.md) error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(globalSkills, "team-b", "go", "SKILL.md"), []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile(team-b/go/SKILL.md) error = %v", err)
+	}
+
+	t.Setenv("XDG_CONFIG_HOME", xdgConfig)
+
+	candidates, directive := completeGlobalSkills(newLinkCmd(), nil, "")
+	if directive == 0 {
+		t.Fatalf("directive = %d, want non-zero no-file-completion directive", directive)
+	}
+	if len(candidates) != 0 {
+		t.Fatalf("len(candidates) = %d, want 0", len(candidates))
 	}
 }
