@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=https://taskfile.dev/schema.json
+# https://taskfile.dev
+version: '3'
+vars:
+  MAIN: cmd/main.go
+  BIN_DIR: ~/.sh/bin
+  EXECUTABLE: bond
+tasks:
+  default:
+    cmd: go run {{.MAIN}} {{.CLI_ARGS}}
+    silent: true
+  init:
+    cmd: go run {{.MAIN}} init {{.CLI_ARGS}}
+    silent: true
+  link:
+    cmd: go run {{.MAIN}} link {{.CLI_ARGS}}
+    silent: true
+  unlink:
+    cmd: go run {{.MAIN}} unlink {{.CLI_ARGS}}
+    silent: true
+  build:
+    cmds:
+      - mkdir -p {{.BIN_DIR}}
+      - go build -ldflags="-s -w" -o {{.EXECUTABLE}} {{.MAIN}}
+      - mv {{.EXECUTABLE}} {{.BIN_DIR}}
+    silent: true
+  test:
+    cmd: go test ./...
+    silent: true
+  lint:
+    cmd: golangci-lint run ./...
+    silent: true
+  format:
+    cmd: gofumpt -l -w .
+    silent: true
