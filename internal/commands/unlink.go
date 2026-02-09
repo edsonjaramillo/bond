@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"fmt"
 	"path/filepath"
 
 	"bond/internal/config"
@@ -56,7 +55,7 @@ func runUnlink(cmd *cobra.Command, args []string) error {
 	}
 
 	if hardErrs > 0 {
-		return fmt.Errorf("unlink failed for %d skill(s)", hardErrs)
+		return alreadyReportedFailure()
 	}
 	return nil
 }

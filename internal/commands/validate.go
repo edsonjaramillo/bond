@@ -68,18 +68,15 @@ func runValidate(cmd *cobra.Command, args []string, all bool) error {
 		}
 
 		invalidSkills++
-		if err := printOut(cmd, levelError, "%s", result.Name); err != nil {
-			return err
-		}
 		for _, issue := range result.Issues {
-			if err := printOut(cmd, levelError, "%s: %s", issue.Rule, issue.Message); err != nil {
+			if err := printOut(cmd, levelError, "(%s) %s: %s", result.Name, issue.Rule, issue.Message); err != nil {
 				return err
 			}
 		}
 	}
 
 	if invalidSkills > 0 {
-		return fmt.Errorf("validation failed for %d skill(s)", invalidSkills)
+		return alreadyReportedFailure()
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package commands
 
 import (
 	"bytes"
+	"errors"
 	"testing"
 
 	"bond/internal/skills"
@@ -66,5 +67,15 @@ func TestStatusLevelMapping(t *testing.T) {
 				t.Fatalf("statusLevel(%q) = %q, want %q", tc.input, got, tc.expect)
 			}
 		})
+	}
+}
+
+func TestPrintRootErrorUsesSharedErrorFormat(t *testing.T) {
+	stderr := &bytes.Buffer{}
+	if err := PrintRootError(stderr, errors.New("boom")); err != nil {
+		t.Fatalf("PrintRootError() error = %v", err)
+	}
+	if got, want := stderr.String(), "[ERROR] boom\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
 	}
 }

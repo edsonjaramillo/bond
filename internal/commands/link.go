@@ -77,8 +77,7 @@ func runLink(cmd *cobra.Command, args []string) error {
 	}
 
 	if hardErrs > 0 {
-		// Return non-nil only for unexpected filesystem/IO failures.
-		return fmt.Errorf("link failed for %d skill(s)", hardErrs)
+		return alreadyReportedFailure()
 	}
 
 	return nil

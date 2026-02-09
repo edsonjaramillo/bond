@@ -122,13 +122,16 @@ func TestValidateCommandSingleSkillInvalidReturnsError(t *testing.T) {
 	if err == nil {
 		t.Fatal("Execute() error = nil, want validation failure")
 	}
-	if !strings.Contains(err.Error(), "validation failed") {
-		t.Fatalf("Execute() error = %q, want validation failure", err)
+	if !IsAlreadyReportedFailure(err) {
+		t.Fatalf("Execute() error = %q, want already-reported failure", err)
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "[ERROR] go") {
-		t.Fatalf("output missing invalid line: %q", output)
+	if !strings.Contains(output, "[ERROR] (go) ") {
+		t.Fatalf("output missing inline invalid line: %q", output)
+	}
+	if strings.Contains(output, "[ERROR] go\n") {
+		t.Fatalf("output contains standalone invalid skill line: %q", output)
 	}
 }
 
@@ -180,12 +183,18 @@ func TestValidateCommandAllSkillsMixedResults(t *testing.T) {
 	if err == nil {
 		t.Fatal("Execute() error = nil, want mixed validation failure")
 	}
+	if !IsAlreadyReportedFailure(err) {
+		t.Fatalf("Execute() error = %q, want already-reported failure", err)
+	}
 
 	output := buf.String()
 	if !strings.Contains(output, "[OK] go") {
 		t.Fatalf("output missing go success: %q", output)
 	}
-	if !strings.Contains(output, "[ERROR] rust") {
-		t.Fatalf("output missing rust invalid: %q", output)
+	if !strings.Contains(output, "[ERROR] (rust) ") {
+		t.Fatalf("output missing rust inline invalid: %q", output)
+	}
+	if strings.Contains(output, "[ERROR] rust\n") {
+		t.Fatalf("output contains standalone invalid skill line: %q", output)
 	}
 }
