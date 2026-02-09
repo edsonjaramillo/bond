@@ -79,9 +79,6 @@ func TestValidateCommandSingleSkillSuccess(t *testing.T) {
 	if !strings.Contains(output, "ok go") {
 		t.Fatalf("output missing success line: %q", output)
 	}
-	if !strings.Contains(output, "summary checked=1 invalid=0 errors=0") {
-		t.Fatalf("output missing summary: %q", output)
-	}
 }
 
 func TestValidateCommandSingleSkillInvalidReturnsError(t *testing.T) {
@@ -132,9 +129,6 @@ func TestValidateCommandSingleSkillInvalidReturnsError(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "invalid go") {
 		t.Fatalf("output missing invalid line: %q", output)
-	}
-	if !strings.Contains(output, "summary checked=1 invalid=1 errors=") {
-		t.Fatalf("output missing failure summary: %q", output)
 	}
 }
 
@@ -193,8 +187,5 @@ func TestValidateCommandAllSkillsMixedResults(t *testing.T) {
 	}
 	if !strings.Contains(output, "invalid rust") {
 		t.Fatalf("output missing rust invalid: %q", output)
-	}
-	if !strings.Contains(output, "summary checked=2 invalid=1 errors=") {
-		t.Fatalf("output missing summary: %q", output)
 	}
 }

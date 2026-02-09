@@ -19,7 +19,7 @@ func newStatusCmd() *cobra.Command {
 	}
 }
 
-// runStatus inspects project skill entries and prints a status summary.
+// runStatus inspects project skill entries and prints status details.
 func runStatus(cmd *cobra.Command, args []string) error {
 	globalDir, err := config.GlobalSkillsDir()
 	if err != nil {
@@ -50,22 +50,9 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return entries[i].Name < entries[j].Name
 	})
 
-	var linked, broken, external, conflict int
 	for _, entry := range entries {
 		fmt.Fprintf(out, "%s %s\n", entry.Status, entry.Name)
-		switch entry.Status {
-		case skills.StatusLinked:
-			linked++
-		case skills.StatusBroken:
-			broken++
-		case skills.StatusExternal:
-			external++
-		case skills.StatusConflict:
-			conflict++
-		}
 	}
-
-	fmt.Fprintf(out, "summary linked=%d broken=%d external=%d conflict=%d\n", linked, broken, external, conflict)
 	return nil
 }
 

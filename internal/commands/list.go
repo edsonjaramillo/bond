@@ -42,7 +42,6 @@ func runList(cmd *cobra.Command, projectOnly bool) error {
 		for _, skill := range discovered {
 			fmt.Fprintln(out, skill.Name)
 		}
-		fmt.Fprintf(out, "summary total=%d\n", len(discovered))
 		return nil
 	}
 
@@ -59,6 +58,5 @@ func runList(cmd *cobra.Command, projectOnly bool) error {
 	for _, entry := range linked {
 		fmt.Fprintln(out, entry.Name)
 	}
-	fmt.Fprintf(out, "summary linked=%d\n", len(linked))
 	return nil
 }

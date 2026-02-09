@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestStatusCommandPrintsSummary(t *testing.T) {
+func TestStatusCommandPrintsEntries(t *testing.T) {
 	tmp := t.TempDir()
 	projectRoot := filepath.Join(tmp, "project")
 	projectSkills := filepath.Join(projectRoot, ".agents", "skills")
@@ -58,8 +58,5 @@ func TestStatusCommandPrintsSummary(t *testing.T) {
 	output := buf.String()
 	if !strings.Contains(output, "linked go") {
 		t.Fatalf("output missing linked entry: %q", output)
-	}
-	if !strings.Contains(output, "summary linked=1 broken=0 external=0 conflict=0") {
-		t.Fatalf("output missing summary: %q", output)
 	}
 }

@@ -23,7 +23,7 @@ func newLinkCmd() *cobra.Command {
 	return cmd
 }
 
-// runLink executes link operations and prints per-skill and summary status.
+// runLink executes link operations and prints per-skill status.
 func runLink(cmd *cobra.Command, args []string) error {
 	sourceDir, err := config.GlobalSkillsDir()
 	if err != nil {
@@ -48,7 +48,7 @@ func runLink(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no matching skills: %s", strings.Join(args, ", "))
 	}
 
-	var linked, skipped, conflicts, hardErrs int
+	var hardErrs int
 	for _, skill := range selected {
 		dest := filepath.Join(skillsDir, skill.Name)
 		result, err := skills.Link(skill.Path, dest)
@@ -60,19 +60,14 @@ func runLink(cmd *cobra.Command, args []string) error {
 
 		switch result.Status {
 		case skills.LinkStatusLinked:
-			linked++
 			fmt.Printf("linked %s\n", skill.Name)
 		case skills.LinkStatusAlreadyLinked:
-			skipped++
 			fmt.Printf("already linked %s\n", skill.Name)
 		case skills.LinkStatusConflict:
-			conflicts++
 			fmt.Printf("conflict %s\n", skill.Name)
 		}
 	}
 
-	// Conflicts are soft failures that still allow the command to complete.
-	fmt.Printf("summary linked=%d skipped=%d conflicts=%d errors=%d\n", linked, skipped, conflicts, hardErrs)
 	if hardErrs > 0 {
 		// Return non-nil only for unexpected filesystem/IO failures.
 		return fmt.Errorf("link failed for %d skill(s)", hardErrs)

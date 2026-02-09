@@ -22,7 +22,7 @@ func newUnlinkCmd() *cobra.Command {
 	return cmd
 }
 
-// runUnlink executes unlink operations and prints per-skill and summary status.
+// runUnlink executes unlink operations and prints per-skill status.
 func runUnlink(cmd *cobra.Command, args []string) error {
 	skillsDir, err := config.ProjectSkillsDir()
 	if err != nil {
@@ -34,7 +34,7 @@ func runUnlink(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	var unlinked, skipped, hardErrs int
+	var hardErrs int
 	for _, entry := range entries {
 		removed, err := skills.Unlink(entry.Path)
 		if err != nil {
@@ -43,16 +43,12 @@ func runUnlink(cmd *cobra.Command, args []string) error {
 			continue
 		}
 		if removed {
-			unlinked++
 			fmt.Printf("unlinked %s\n", entry.Name)
 		} else {
-			skipped++
 			fmt.Printf("skipped %s (not a symlink)\n", entry.Name)
 		}
 	}
 
-	// Missing/non-symlink targets are counted as skipped instead of hard errors.
-	fmt.Printf("summary unlinked=%d skipped=%d errors=%d\n", unlinked, skipped, hardErrs)
 	if hardErrs > 0 {
 		return fmt.Errorf("unlink failed for %d skill(s)", hardErrs)
 	}

@@ -60,7 +60,6 @@ func runValidate(cmd *cobra.Command, args []string, all bool) error {
 	}
 
 	var invalidSkills int
-	var issueCount int
 	for _, result := range results {
 		if len(result.Issues) == 0 {
 			fmt.Fprintf(out, "ok %s\n", result.Name)
@@ -70,12 +69,10 @@ func runValidate(cmd *cobra.Command, args []string, all bool) error {
 		invalidSkills++
 		fmt.Fprintf(out, "invalid %s\n", result.Name)
 		for _, issue := range result.Issues {
-			issueCount++
 			fmt.Fprintf(out, "error %s %s\n", issue.Rule, issue.Message)
 		}
 	}
 
-	fmt.Fprintf(out, "summary checked=%d invalid=%d errors=%d\n", len(results), invalidSkills, issueCount)
 	if invalidSkills > 0 {
 		return fmt.Errorf("validation failed for %d skill(s)", invalidSkills)
 	}

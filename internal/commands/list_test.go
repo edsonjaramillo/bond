@@ -65,9 +65,6 @@ func TestListCommandDefaultListsGlobalSkills(t *testing.T) {
 	if !strings.Contains(output, "rust\n") {
 		t.Fatalf("output missing rust skill: %q", output)
 	}
-	if !strings.Contains(output, "summary total=2") {
-		t.Fatalf("output missing summary: %q", output)
-	}
 }
 
 func TestListCommandProjectFlagListsOnlyGlobalLinks(t *testing.T) {
@@ -139,8 +136,5 @@ func TestListCommandProjectFlagListsOnlyGlobalLinks(t *testing.T) {
 	}
 	if strings.Contains(output, "regular\n") {
 		t.Fatalf("output unexpectedly includes regular entry: %q", output)
-	}
-	if !strings.Contains(output, "summary linked=1") {
-		t.Fatalf("output missing summary: %q", output)
 	}
 }
