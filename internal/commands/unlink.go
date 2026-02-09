@@ -14,6 +14,7 @@ func newUnlinkCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "unlink [skill ...]",
 		Short: "Remove symlinked skills from ./.agents/skills",
+		Args:  cobra.MinimumNArgs(1),
 		RunE:  runUnlink,
 	}
 
@@ -31,11 +32,6 @@ func runUnlink(cmd *cobra.Command, args []string) error {
 	entries, err := resolveUnlinkTargets(skillsDir, args)
 	if err != nil {
 		return err
-	}
-	if len(entries) == 0 {
-		// No arguments + no linked entries.
-		fmt.Println("nothing to unlink")
-		return nil
 	}
 
 	var unlinked, skipped, hardErrs int
@@ -65,10 +61,6 @@ func runUnlink(cmd *cobra.Command, args []string) error {
 
 // resolveUnlinkTargets builds unlink candidates from args or discovered links.
 func resolveUnlinkTargets(skillsDir string, args []string) ([]skills.Entry, error) {
-	if len(args) == 0 {
-		return skills.DiscoverLinked(skillsDir)
-	}
-
 	entries := make([]skills.Entry, 0, len(args))
 	for _, name := range args {
 		// Explicit args are accepted even if the path does not exist yet; Unlink

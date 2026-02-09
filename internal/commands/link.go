@@ -3,6 +3,7 @@ package commands
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"bond/internal/config"
 	"bond/internal/skills"
@@ -14,6 +15,7 @@ func newLinkCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "link [skill ...]",
 		Short: "Symlink global skills into ./.agents/skills",
+		Args:  cobra.MinimumNArgs(1),
 		RunE:  runLink,
 	}
 
@@ -43,9 +45,7 @@ func runLink(cmd *cobra.Command, args []string) error {
 
 	selected := selectSkills(discovered, args)
 	if len(selected) == 0 {
-		// This also covers the case where args were provided but none matched.
-		fmt.Printf("no skills found in %s\n", sourceDir)
-		return nil
+		return fmt.Errorf("no matching skills: %s", strings.Join(args, ", "))
 	}
 
 	var linked, skipped, conflicts, hardErrs int
@@ -83,10 +83,6 @@ func runLink(cmd *cobra.Command, args []string) error {
 
 // selectSkills maps CLI args to discovered skills, preserving arg order.
 func selectSkills(discovered []skills.Skill, args []string) []skills.Skill {
-	if len(args) == 0 {
-		return discovered
-	}
-
 	byName := make(map[string]skills.Skill, len(discovered))
 	for _, skill := range discovered {
 		byName[skill.Name] = skill
