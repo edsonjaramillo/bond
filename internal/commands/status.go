@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"fmt"
 	"sort"
 
 	"bond/internal/config"
@@ -36,11 +35,10 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	out := cmd.OutOrStdout()
-	if _, err := fmt.Fprintf(out, "project %s\n", report.ProjectSkillsDir); err != nil {
+	if err := printOut(cmd, levelInfo, "project %s", report.ProjectSkillsDir); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(out, "global %s\n", report.GlobalSkillsDir); err != nil {
+	if err := printOut(cmd, levelInfo, "global %s", report.GlobalSkillsDir); err != nil {
 		return err
 	}
 
@@ -55,11 +53,24 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	})
 
 	for _, entry := range entries {
-		if _, err := fmt.Fprintf(out, "%s %s\n", entry.Status, entry.Name); err != nil {
+		if err := printOut(cmd, statusLevel(entry.Status), "%s %s", entry.Status, entry.Name); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+func statusLevel(status skills.StatusKind) string {
+	switch status {
+	case skills.StatusLinked:
+		return levelOK
+	case skills.StatusBroken:
+		return levelError
+	case skills.StatusExternal:
+		return levelWarn
+	default:
+		return levelInfo
+	}
 }
 
 func statusRank(status skills.StatusKind) int {

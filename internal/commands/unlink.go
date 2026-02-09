@@ -39,13 +39,19 @@ func runUnlink(cmd *cobra.Command, args []string) error {
 		removed, err := skills.Unlink(entry.Path)
 		if err != nil {
 			hardErrs++
-			fmt.Printf("error %s: %v\n", entry.Name, err)
+			if printErrErr := printErr(cmd, levelError, "%s: %v", entry.Name, err); printErrErr != nil {
+				return printErrErr
+			}
 			continue
 		}
 		if removed {
-			fmt.Printf("unlinked %s\n", entry.Name)
+			if err := printOut(cmd, levelOK, "unlinked %s", entry.Name); err != nil {
+				return err
+			}
 		} else {
-			fmt.Printf("skipped %s (not a symlink)\n", entry.Name)
+			if err := printOut(cmd, levelWarn, "skipped %s (not a symlink)", entry.Name); err != nil {
+				return err
+			}
 		}
 	}
 

@@ -56,7 +56,7 @@ func TestStatusCommandPrintsEntries(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "linked go") {
+	if !strings.Contains(output, "[OK] linked go") {
 		t.Fatalf("output missing linked entry: %q", output)
 	}
 }

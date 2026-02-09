@@ -1,8 +1,6 @@
 package commands
 
 import (
-	"fmt"
-
 	"bond/internal/config"
 	"bond/internal/skills"
 	"github.com/spf13/cobra"
@@ -32,7 +30,6 @@ func runList(cmd *cobra.Command, projectOnly bool) error {
 		return err
 	}
 
-	out := cmd.OutOrStdout()
 	if !projectOnly {
 		discovered, err := skills.Discover(globalDir)
 		if err != nil {
@@ -40,7 +37,7 @@ func runList(cmd *cobra.Command, projectOnly bool) error {
 		}
 
 		for _, skill := range discovered {
-			if _, err := fmt.Fprintln(out, skill.Name); err != nil {
+			if err := printOut(cmd, levelInfo, "%s", skill.Name); err != nil {
 				return err
 			}
 		}
@@ -58,7 +55,7 @@ func runList(cmd *cobra.Command, projectOnly bool) error {
 	}
 
 	for _, entry := range linked {
-		if _, err := fmt.Fprintln(out, entry.Name); err != nil {
+		if err := printOut(cmd, levelInfo, "%s", entry.Name); err != nil {
 			return err
 		}
 	}

@@ -54,17 +54,25 @@ func runLink(cmd *cobra.Command, args []string) error {
 		result, err := skills.Link(skill.Path, dest)
 		if err != nil {
 			hardErrs++
-			fmt.Printf("error %s: %v\n", skill.Name, err)
+			if printErrErr := printErr(cmd, levelError, "%s: %v", skill.Name, err); printErrErr != nil {
+				return printErrErr
+			}
 			continue
 		}
 
 		switch result.Status {
 		case skills.LinkStatusLinked:
-			fmt.Printf("linked %s\n", skill.Name)
+			if err := printOut(cmd, levelOK, "linked %s", skill.Name); err != nil {
+				return err
+			}
 		case skills.LinkStatusAlreadyLinked:
-			fmt.Printf("already linked %s\n", skill.Name)
+			if err := printOut(cmd, levelInfo, "already linked %s", skill.Name); err != nil {
+				return err
+			}
 		case skills.LinkStatusConflict:
-			fmt.Printf("conflict %s\n", skill.Name)
+			if err := printOut(cmd, levelWarn, "conflict %s", skill.Name); err != nil {
+				return err
+			}
 		}
 	}
 

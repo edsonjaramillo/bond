@@ -59,10 +59,10 @@ func TestListCommandDefaultListsGlobalSkills(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "go\n") {
+	if !strings.Contains(output, "[INFO] go\n") {
 		t.Fatalf("output missing go skill: %q", output)
 	}
-	if !strings.Contains(output, "rust\n") {
+	if !strings.Contains(output, "[INFO] rust\n") {
 		t.Fatalf("output missing rust skill: %q", output)
 	}
 }
@@ -128,13 +128,13 @@ func TestListCommandProjectFlagListsOnlyGlobalLinks(t *testing.T) {
 	}
 
 	output := buf.String()
-	if !strings.Contains(output, "go\n") {
+	if !strings.Contains(output, "[INFO] go\n") {
 		t.Fatalf("output missing go skill: %q", output)
 	}
-	if strings.Contains(output, "external\n") {
+	if strings.Contains(output, "[INFO] external\n") {
 		t.Fatalf("output unexpectedly includes external skill: %q", output)
 	}
-	if strings.Contains(output, "regular\n") {
+	if strings.Contains(output, "[INFO] regular\n") {
 		t.Fatalf("output unexpectedly includes regular entry: %q", output)
 	}
 }
