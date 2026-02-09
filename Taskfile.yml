@@ -24,6 +24,9 @@ tasks:
   unlink:
     cmd: go run {{.MAIN}} unlink {{.CLI_ARGS}}
     silent: true
+  validate:
+    cmd: go run {{.MAIN}} validate {{.CLI_ARGS}}
+    silent: true
   build:
     cmds:
       - mkdir -p {{.BIN_DIR}}
