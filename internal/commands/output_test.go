@@ -9,7 +9,18 @@ import (
 	"github.com/spf13/cobra"
 )
 
+func withOutputColorMode(t *testing.T, mode string) {
+	t.Helper()
+	prev := outputColorMode
+	setOutputColorMode(mode)
+	t.Cleanup(func() {
+		setOutputColorMode(prev)
+	})
+}
+
 func TestPrintOutPrefixesTagAndWritesStdout(t *testing.T) {
+	withOutputColorMode(t, colorModeNever)
+
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	cmd := &cobra.Command{}
@@ -29,6 +40,8 @@ func TestPrintOutPrefixesTagAndWritesStdout(t *testing.T) {
 }
 
 func TestPrintErrPrefixesTagAndWritesStderr(t *testing.T) {
+	withOutputColorMode(t, colorModeNever)
+
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
 	cmd := &cobra.Command{}
@@ -71,11 +84,103 @@ func TestStatusLevelMapping(t *testing.T) {
 }
 
 func TestPrintRootErrorUsesSharedErrorFormat(t *testing.T) {
+	withOutputColorMode(t, colorModeNever)
+
 	stderr := &bytes.Buffer{}
 	if err := PrintRootError(stderr, errors.New("boom")); err != nil {
 		t.Fatalf("PrintRootError() error = %v", err)
 	}
 	if got, want := stderr.String(), "[ERROR] boom\n"; got != want {
 		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestParseColorMode(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{name: "auto", input: "auto", want: colorModeAuto},
+		{name: "always", input: "always", want: colorModeAlways},
+		{name: "never", input: "never", want: colorModeNever},
+		{name: "trim and case-insensitive", input: "  AlWaYs ", want: colorModeAlways},
+		{name: "invalid", input: "sometimes", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseColorMode(tc.input)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("parseColorMode(%q) error = nil, want non-nil", tc.input)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseColorMode(%q) error = %v", tc.input, err)
+			}
+			if got != tc.want {
+				t.Fatalf("parseColorMode(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPrintOutAlwaysColorsLevel(t *testing.T) {
+	withOutputColorMode(t, colorModeAlways)
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+
+	if err := printOut(cmd, levelOK, "linked %s", "go"); err != nil {
+		t.Fatalf("printOut() error = %v", err)
+	}
+
+	if got, want := stdout.String(), "["+ansiGreen+"OK"+ansiReset+"] linked go\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestPrintOutAlwaysIgnoresNoColor(t *testing.T) {
+	withOutputColorMode(t, colorModeAlways)
+	t.Setenv("NO_COLOR", "1")
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+
+	if err := printOut(cmd, levelError, "failed %s", "go"); err != nil {
+		t.Fatalf("printOut() error = %v", err)
+	}
+
+	if got, want := stdout.String(), "["+ansiRed+"ERROR"+ansiReset+"] failed go\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestPrintOutAutoHonorsNoColor(t *testing.T) {
+	withOutputColorMode(t, colorModeAuto)
+	t.Setenv("NO_COLOR", "1")
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+
+	if err := printOut(cmd, levelWarn, "conflict %s", "go"); err != nil {
+		t.Fatalf("printOut() error = %v", err)
+	}
+
+	if got, want := stdout.String(), "[WARN] conflict go\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
 	}
 }

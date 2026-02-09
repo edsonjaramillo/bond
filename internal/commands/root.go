@@ -9,12 +9,23 @@ func Execute() error {
 
 // newRootCmd creates the top-level bond command and wires subcommands.
 func newRootCmd() *cobra.Command {
+	var colorFlag string
+
 	cmd := &cobra.Command{
 		Use:           "bond",
 		Short:         "Manage project-local skill links",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			mode, err := parseColorMode(colorFlag)
+			if err != nil {
+				return err
+			}
+			setOutputColorMode(mode)
+			return nil
+		},
 	}
+	cmd.PersistentFlags().StringVar(&colorFlag, "color", colorModeAuto, "Colorize output: auto, always, never")
 
 	cmd.AddCommand(newInitCmd())
 	cmd.AddCommand(newListCmd())
