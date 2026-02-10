@@ -78,6 +78,22 @@ func TestRootRegistersCreateCommand(t *testing.T) {
 	}
 }
 
+func TestRootRegistersEditCommand(t *testing.T) {
+	cmd := newRootCmd()
+
+	found := false
+	for _, child := range cmd.Commands() {
+		if child.Name() == "edit" {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Fatal("newRootCmd() missing edit command")
+	}
+}
+
 func TestRootNoLevelFlagAppliesToSubcommands(t *testing.T) {
 	withRootOutputShowLevel(t, true)
 
