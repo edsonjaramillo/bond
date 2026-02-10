@@ -8,30 +8,30 @@ import (
 
 // newListCmd builds the command that lists available skills.
 func newListCmd() *cobra.Command {
-	var projectOnly bool
+	var storeOnly bool
 
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List store skills or project-linked skills",
+		Short: "List project skills or store skills",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runList(cmd, projectOnly)
+			return runList(cmd, storeOnly)
 		},
 	}
 
-	cmd.Flags().BoolVar(&projectOnly, "project", false, "List skills linked in the current project")
+	cmd.Flags().BoolVar(&storeOnly, "store", false, "List skills in the store directory")
 	return cmd
 }
 
-// runList prints store skills by default, or project-linked store skills.
-func runList(cmd *cobra.Command, projectOnly bool) error {
-	storeDir, err := config.StoreSkillsDir()
-	if err != nil {
-		return err
-	}
+// runList prints project skills by default, or store skills with --store.
+func runList(cmd *cobra.Command, storeOnly bool) error {
+	if !storeOnly {
+		projectDir, err := config.ProjectSkillsDir()
+		if err != nil {
+			return err
+		}
 
-	if !projectOnly {
-		discovered, err := skills.Discover(storeDir)
+		discovered, err := skills.DiscoverProjectAll(projectDir)
 		if err != nil {
 			return err
 		}
@@ -44,18 +44,17 @@ func runList(cmd *cobra.Command, projectOnly bool) error {
 		return nil
 	}
 
-	projectDir, err := config.ProjectSkillsDir()
+	storeDir, err := config.StoreSkillsDir()
+	if err != nil {
+		return err
+	}
+	discovered, err := skills.Discover(storeDir)
 	if err != nil {
 		return err
 	}
 
-	linked, err := skills.DiscoverProjectLinkedStore(projectDir, storeDir)
-	if err != nil {
-		return err
-	}
-
-	for _, entry := range linked {
-		if err := printOut(cmd, levelInfo, "%s", entry.Name); err != nil {
+	for _, skill := range discovered {
+		if err := printOut(cmd, levelInfo, "%s", skill.Name); err != nil {
 			return err
 		}
 	}
