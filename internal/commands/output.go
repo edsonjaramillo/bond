@@ -30,7 +30,10 @@ const (
 	ansiGreen  = "\x1b[32m"
 )
 
-var outputColorMode = colorModeAuto
+var (
+	outputColorMode = colorModeAuto
+	outputShowLevel = true
+)
 
 func parseColorMode(raw string) (string, error) {
 	mode := strings.ToLower(strings.TrimSpace(raw))
@@ -44,6 +47,10 @@ func parseColorMode(raw string) (string, error) {
 
 func setOutputColorMode(mode string) {
 	outputColorMode = mode
+}
+
+func setOutputShowLevel(show bool) {
+	outputShowLevel = show
 }
 
 func shouldColorize(w io.Writer, mode string) bool {
@@ -102,6 +109,10 @@ func formatLevel(level string, colorEnabled bool) string {
 
 func writeLevelLine(w io.Writer, level string, format string, args ...any) error {
 	msg := fmt.Sprintf(format, args...)
+	if !outputShowLevel {
+		_, err := fmt.Fprintf(w, "%s\n", msg)
+		return err
+	}
 	tag := formatLevel(level, shouldColorize(w, outputColorMode))
 	_, err := fmt.Fprintf(w, "[%s] %s\n", tag, msg)
 	return err

@@ -13,6 +13,7 @@ func Execute() error {
 // newRootCmd creates the top-level bond command and wires subcommands.
 func newRootCmd() *cobra.Command {
 	var colorFlag string
+	var noLevelFlag bool
 
 	cmd := &cobra.Command{
 		Use:           "bond",
@@ -26,10 +27,12 @@ func newRootCmd() *cobra.Command {
 				return err
 			}
 			setOutputColorMode(mode)
+			setOutputShowLevel(!noLevelFlag)
 			return nil
 		},
 	}
 	cmd.PersistentFlags().StringVar(&colorFlag, "color", colorModeAuto, "Colorize output: auto, always, never")
+	cmd.PersistentFlags().BoolVar(&noLevelFlag, "no-level", false, "Hide output level labels (INFO, OK, WARN, ERROR)")
 
 	cmd.AddCommand(newInitCmd())
 	cmd.AddCommand(newListCmd())
