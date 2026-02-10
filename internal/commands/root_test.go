@@ -33,3 +33,19 @@ func TestRootRegistersCopyCommand(t *testing.T) {
 		t.Fatal("newRootCmd() missing copy command")
 	}
 }
+
+func TestRootRegistersStoreCommand(t *testing.T) {
+	cmd := newRootCmd()
+
+	found := false
+	for _, child := range cmd.Commands() {
+		if child.Name() == "store" {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Fatal("newRootCmd() missing store command")
+	}
+}
