@@ -62,6 +62,22 @@ func TestRootRegistersStoreCommand(t *testing.T) {
 	}
 }
 
+func TestRootRegistersCreateCommand(t *testing.T) {
+	cmd := newRootCmd()
+
+	found := false
+	for _, child := range cmd.Commands() {
+		if child.Name() == "create" {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Fatal("newRootCmd() missing create command")
+	}
+}
+
 func TestRootNoLevelFlagAppliesToSubcommands(t *testing.T) {
 	withRootOutputShowLevel(t, true)
 
