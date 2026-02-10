@@ -142,3 +142,81 @@ func TestInitCommandReturnsErrorWhenAgentsPathIsFile(t *testing.T) {
 		t.Fatalf("output = %q, want empty output", got)
 	}
 }
+
+func TestInitCommandGlobalWhenDirectoryMissing(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	globalDir := filepath.Join(tmp, "bond")
+
+	buf := &bytes.Buffer{}
+	cmd := newInitCmd()
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"--global"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if got, want := buf.String(), "[OK] initialized global bond directory\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+	if _, err := os.Stat(globalDir); err != nil {
+		t.Fatalf("Stat(globalDir) error = %v", err)
+	}
+}
+
+func TestInitCommandGlobalWhenDirectoryExists(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	globalDir := filepath.Join(tmp, "bond")
+	if err := os.MkdirAll(globalDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll(globalDir) error = %v", err)
+	}
+
+	buf := &bytes.Buffer{}
+	cmd := newInitCmd()
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"--global"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if got, want := buf.String(), "[INFO] global bond directory already exists\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+}
+
+func TestInitCommandGlobalReturnsErrorWhenPathIsFile(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", tmp)
+	globalPath := filepath.Join(tmp, "bond")
+	if err := os.WriteFile(globalPath, []byte("x"), 0o644); err != nil {
+		t.Fatalf("WriteFile(globalPath) error = %v", err)
+	}
+
+	buf := &bytes.Buffer{}
+	cmd := newInitCmd()
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"--global"})
+
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("Execute() error = nil, want non-nil")
+	}
+	if !strings.Contains(err.Error(), `exists and is not a directory`) {
+		t.Fatalf("error = %q, want non-directory message", err.Error())
+	}
+	if got := buf.String(); got != "" {
+		t.Fatalf("output = %q, want empty output", got)
+	}
+}

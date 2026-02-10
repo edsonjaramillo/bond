@@ -10,10 +10,33 @@ import (
 
 // newInitCmd builds the init command for bootstrapping project directories.
 func newInitCmd() *cobra.Command {
-	return &cobra.Command{
+	var global bool
+
+	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Initialize .agents/skills in the current project",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if global {
+				globalDir, err := config.GlobalSkillsDir()
+				if err != nil {
+					return err
+				}
+
+				created, err := ensureDir(globalDir)
+				if err != nil {
+					return err
+				}
+
+				level := levelInfo
+				message := "global bond directory already exists"
+				if created {
+					level = levelOK
+					message = "initialized global bond directory"
+				}
+
+				return printOut(cmd, level, message)
+			}
+
 			agentsDir, err := config.ProjectAgentsDir()
 			if err != nil {
 				return err
@@ -50,6 +73,9 @@ func newInitCmd() *cobra.Command {
 			return printOut(cmd, level, message)
 		},
 	}
+
+	cmd.Flags().BoolVar(&global, "global", false, "Initialize global Bond directory (XDG_CONFIG_HOME/bond or ~/.config/bond)")
+	return cmd
 }
 
 // ensureDir creates path when missing and reports whether it was created.
