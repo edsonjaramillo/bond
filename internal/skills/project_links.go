@@ -7,13 +7,13 @@ import (
 	"sort"
 )
 
-// DiscoverProjectLinkedGlobal returns project symlink entries that point into globalSkillsDir.
-func DiscoverProjectLinkedGlobal(projectSkillsDir, globalSkillsDir string) ([]Entry, error) {
+// DiscoverProjectLinkedStore returns project symlink entries that point into storeSkillsDir.
+func DiscoverProjectLinkedStore(projectSkillsDir, storeSkillsDir string) ([]Entry, error) {
 	projectAbs, err := filepath.Abs(projectSkillsDir)
 	if err != nil {
 		return nil, err
 	}
-	globalAbs, err := filepath.Abs(globalSkillsDir)
+	storeAbs, err := filepath.Abs(storeSkillsDir)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +46,7 @@ func DiscoverProjectLinkedGlobal(projectSkillsDir, globalSkillsDir string) ([]En
 			return nil, err
 		}
 
-		if !isWithinDir(targetAbs, globalAbs) {
+		if !isWithinDir(targetAbs, storeAbs) {
 			continue
 		}
 

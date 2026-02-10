@@ -38,8 +38,8 @@ func ProjectSkillsDirFrom(root string) string {
 	return filepath.Join(ProjectAgentsDirFrom(root), "skills")
 }
 
-// GlobalSkillsDir returns the global Bond skills directory based on XDG conventions.
-func GlobalSkillsDir() (string, error) {
+// StoreSkillsDir returns the store Bond skills directory based on XDG conventions.
+func StoreSkillsDir() (string, error) {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
 		return filepath.Join(xdg, "bond"), nil
 	}

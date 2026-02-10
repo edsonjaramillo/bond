@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestDiscoverProjectLinkedGlobalFiltersAndSorts(t *testing.T) {
+func TestDiscoverProjectLinkedStoreFiltersAndSorts(t *testing.T) {
 	tmp := t.TempDir()
 	globalDir := filepath.Join(tmp, "global")
 	projectDir := filepath.Join(tmp, "project", ".agents", "skills")
@@ -49,9 +49,9 @@ func TestDiscoverProjectLinkedGlobalFiltersAndSorts(t *testing.T) {
 		t.Fatalf("WriteFile(regular) error = %v", err)
 	}
 
-	entries, err := DiscoverProjectLinkedGlobal(projectDir, globalDir)
+	entries, err := DiscoverProjectLinkedStore(projectDir, globalDir)
 	if err != nil {
-		t.Fatalf("DiscoverProjectLinkedGlobal() error = %v", err)
+		t.Fatalf("DiscoverProjectLinkedStore() error = %v", err)
 	}
 
 	if len(entries) != 2 {
@@ -65,7 +65,7 @@ func TestDiscoverProjectLinkedGlobalFiltersAndSorts(t *testing.T) {
 	}
 }
 
-func TestDiscoverProjectLinkedGlobalMissingProjectDir(t *testing.T) {
+func TestDiscoverProjectLinkedStoreMissingProjectDir(t *testing.T) {
 	tmp := t.TempDir()
 	globalDir := filepath.Join(tmp, "global")
 	projectDir := filepath.Join(tmp, "project", ".agents", "skills")
@@ -74,9 +74,9 @@ func TestDiscoverProjectLinkedGlobalMissingProjectDir(t *testing.T) {
 		t.Fatalf("MkdirAll(globalDir) error = %v", err)
 	}
 
-	entries, err := DiscoverProjectLinkedGlobal(projectDir, globalDir)
+	entries, err := DiscoverProjectLinkedStore(projectDir, globalDir)
 	if err != nil {
-		t.Fatalf("DiscoverProjectLinkedGlobal() error = %v", err)
+		t.Fatalf("DiscoverProjectLinkedStore() error = %v", err)
 	}
 	if len(entries) != 0 {
 		t.Fatalf("len(entries) = %d, want 0", len(entries))

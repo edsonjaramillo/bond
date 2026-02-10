@@ -12,7 +12,7 @@ func newListCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List global skills or project-linked skills",
+		Short: "List store skills or project-linked skills",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runList(cmd, projectOnly)
@@ -23,15 +23,15 @@ func newListCmd() *cobra.Command {
 	return cmd
 }
 
-// runList prints global skills by default, or project-linked global skills.
+// runList prints store skills by default, or project-linked store skills.
 func runList(cmd *cobra.Command, projectOnly bool) error {
-	globalDir, err := config.GlobalSkillsDir()
+	storeDir, err := config.StoreSkillsDir()
 	if err != nil {
 		return err
 	}
 
 	if !projectOnly {
-		discovered, err := skills.Discover(globalDir)
+		discovered, err := skills.Discover(storeDir)
 		if err != nil {
 			return err
 		}
@@ -49,7 +49,7 @@ func runList(cmd *cobra.Command, projectOnly bool) error {
 		return err
 	}
 
-	linked, err := skills.DiscoverProjectLinkedGlobal(projectDir, globalDir)
+	linked, err := skills.DiscoverProjectLinkedStore(projectDir, storeDir)
 	if err != nil {
 		return err
 	}

@@ -10,11 +10,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newStoreCmd builds the command that stores project skills globally.
+// newStoreCmd builds the command that stores project skills in the store directory.
 func newStoreCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "store [skill ...]",
-		Short: "Copy project skills into the global Bond directory",
+		Short: "Copy project skills into the store Bond directory",
 		Args:  cobra.MinimumNArgs(1),
 		RunE:  runStore,
 	}
@@ -23,18 +23,18 @@ func newStoreCmd() *cobra.Command {
 	return cmd
 }
 
-// runStore executes copy operations from project-local skills to global skills.
+// runStore executes copy operations from project-local skills to store skills.
 func runStore(cmd *cobra.Command, args []string) error {
 	projectSkillsDir, err := config.ProjectSkillsDir()
 	if err != nil {
 		return err
 	}
 
-	globalDir, err := config.GlobalSkillsDir()
+	storeDir, err := config.StoreSkillsDir()
 	if err != nil {
 		return err
 	}
-	if _, err := ensureDir(globalDir); err != nil {
+	if _, err := ensureDir(storeDir); err != nil {
 		return err
 	}
 
@@ -50,7 +50,7 @@ func runStore(cmd *cobra.Command, args []string) error {
 
 	var hardErrs int
 	for _, skill := range selected {
-		dest := filepath.Join(globalDir, skill.Name)
+		dest := filepath.Join(storeDir, skill.Name)
 		result, err := skills.Copy(skill.Path, dest)
 		if err != nil {
 			hardErrs++
