@@ -43,5 +43,5 @@ tasks:
     cmd: golangci-lint run ./...
     silent: true
   format:
-    cmd: gofumpt -l -w .
+    cmd: gofumpt -w .
     silent: true
