@@ -18,8 +18,18 @@ func withOutputColorMode(t *testing.T, mode string) {
 	})
 }
 
+func withOutputShowLevel(t *testing.T, show bool) {
+	t.Helper()
+	prev := outputShowLevel
+	setOutputShowLevel(show)
+	t.Cleanup(func() {
+		setOutputShowLevel(prev)
+	})
+}
+
 func TestPrintOutPrefixesTagAndWritesStdout(t *testing.T) {
 	withOutputColorMode(t, colorModeNever)
+	withOutputShowLevel(t, true)
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -41,6 +51,7 @@ func TestPrintOutPrefixesTagAndWritesStdout(t *testing.T) {
 
 func TestPrintErrPrefixesTagAndWritesStderr(t *testing.T) {
 	withOutputColorMode(t, colorModeNever)
+	withOutputShowLevel(t, true)
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -85,6 +96,7 @@ func TestStatusLevelMapping(t *testing.T) {
 
 func TestPrintRootErrorUsesSharedErrorFormat(t *testing.T) {
 	withOutputColorMode(t, colorModeNever)
+	withOutputShowLevel(t, true)
 
 	stderr := &bytes.Buffer{}
 	if err := PrintRootError(stderr, errors.New("boom")); err != nil {
@@ -131,6 +143,7 @@ func TestParseColorMode(t *testing.T) {
 
 func TestPrintOutAlwaysColorsLevel(t *testing.T) {
 	withOutputColorMode(t, colorModeAlways)
+	withOutputShowLevel(t, true)
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -149,6 +162,7 @@ func TestPrintOutAlwaysColorsLevel(t *testing.T) {
 
 func TestPrintOutAlwaysIgnoresNoColor(t *testing.T) {
 	withOutputColorMode(t, colorModeAlways)
+	withOutputShowLevel(t, true)
 	t.Setenv("NO_COLOR", "1")
 
 	stdout := &bytes.Buffer{}
@@ -168,6 +182,7 @@ func TestPrintOutAlwaysIgnoresNoColor(t *testing.T) {
 
 func TestPrintOutAutoHonorsNoColor(t *testing.T) {
 	withOutputColorMode(t, colorModeAuto)
+	withOutputShowLevel(t, true)
 	t.Setenv("NO_COLOR", "1")
 
 	stdout := &bytes.Buffer{}
@@ -182,5 +197,56 @@ func TestPrintOutAutoHonorsNoColor(t *testing.T) {
 
 	if got, want := stdout.String(), "[WARN] conflict go\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestPrintOutWithoutLevelTag(t *testing.T) {
+	withOutputColorMode(t, colorModeAlways)
+	withOutputShowLevel(t, false)
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+
+	if err := printOut(cmd, levelWarn, "conflict %s", "go"); err != nil {
+		t.Fatalf("printOut() error = %v", err)
+	}
+
+	if got, want := stdout.String(), "conflict go\n"; got != want {
+		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestPrintErrWithoutLevelTag(t *testing.T) {
+	withOutputColorMode(t, colorModeAlways)
+	withOutputShowLevel(t, false)
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	cmd := &cobra.Command{}
+	cmd.SetOut(stdout)
+	cmd.SetErr(stderr)
+
+	if err := printErr(cmd, levelError, "failed %s", "go"); err != nil {
+		t.Fatalf("printErr() error = %v", err)
+	}
+
+	if got, want := stderr.String(), "failed go\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
+	}
+}
+
+func TestPrintRootErrorWithoutLevelTag(t *testing.T) {
+	withOutputColorMode(t, colorModeNever)
+	withOutputShowLevel(t, false)
+
+	stderr := &bytes.Buffer{}
+	if err := PrintRootError(stderr, errors.New("boom")); err != nil {
+		t.Fatalf("PrintRootError() error = %v", err)
+	}
+	if got, want := stderr.String(), "boom\n"; got != want {
+		t.Fatalf("stderr = %q, want %q", got, want)
 	}
 }

@@ -1,9 +1,21 @@
 package commands
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func withRootOutputShowLevel(t *testing.T, show bool) {
+	t.Helper()
+	prev := outputShowLevel
+	setOutputShowLevel(show)
+	t.Cleanup(func() {
+		setOutputShowLevel(prev)
+	})
+}
 
 func TestRootRejectsInvalidColorFlagValue(t *testing.T) {
 	cmd := newRootCmd()
@@ -47,5 +59,30 @@ func TestRootRegistersStoreCommand(t *testing.T) {
 
 	if !found {
 		t.Fatal("newRootCmd() missing store command")
+	}
+}
+
+func TestRootNoLevelFlagAppliesToSubcommands(t *testing.T) {
+	withRootOutputShowLevel(t, true)
+
+	tmp := t.TempDir()
+	projectRoot := filepath.Join(tmp, "project")
+	if err := os.MkdirAll(projectRoot, 0o755); err != nil {
+		t.Fatalf("MkdirAll(projectRoot) error = %v", err)
+	}
+	chdirForTest(t, projectRoot)
+
+	buf := &bytes.Buffer{}
+	cmd := newRootCmd()
+	cmd.SetOut(buf)
+	cmd.SetErr(buf)
+	cmd.SetArgs([]string{"--no-level", "init"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute() error = %v", err)
+	}
+
+	if got, want := buf.String(), "initialized .agents/skills\n"; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
 	}
 }
