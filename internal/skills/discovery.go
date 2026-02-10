@@ -8,7 +8,7 @@ import (
 	"sort"
 )
 
-// Skill describes a globally available skill directory entry.
+// Skill describes a store-available skill directory entry.
 type Skill struct {
 	Name string
 	Path string

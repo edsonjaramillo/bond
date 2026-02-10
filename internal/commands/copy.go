@@ -10,22 +10,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newCopyCmd builds the command that copies global skills into the project.
+// newCopyCmd builds the command that copies store skills into the project.
 func newCopyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "copy [skill ...]",
-		Short: "Copy global skills into ./.agents/skills",
+		Short: "Copy store skills into ./.agents/skills",
 		Args:  cobra.MinimumNArgs(1),
 		RunE:  runCopy,
 	}
 
-	cmd.ValidArgsFunction = completeGlobalSkills
+	cmd.ValidArgsFunction = completeStoreSkills
 	return cmd
 }
 
 // runCopy executes copy operations and prints per-skill status.
 func runCopy(cmd *cobra.Command, args []string) error {
-	sourceDir, err := config.GlobalSkillsDir()
+	sourceDir, err := config.StoreSkillsDir()
 	if err != nil {
 		return err
 	}

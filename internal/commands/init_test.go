@@ -154,13 +154,13 @@ func TestInitCommandGlobalWhenDirectoryMissing(t *testing.T) {
 	cmd.SilenceUsage = true
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"--global"})
+	cmd.SetArgs([]string{"--store"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
-	if got, want := buf.String(), "[OK] initialized global bond directory\n"; got != want {
+	if got, want := buf.String(), "[OK] initialized store bond directory\n"; got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
 	if _, err := os.Stat(globalDir); err != nil {
@@ -182,13 +182,13 @@ func TestInitCommandGlobalWhenDirectoryExists(t *testing.T) {
 	cmd.SilenceUsage = true
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"--global"})
+	cmd.SetArgs([]string{"--store"})
 
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute() error = %v", err)
 	}
 
-	if got, want := buf.String(), "[INFO] global bond directory already exists\n"; got != want {
+	if got, want := buf.String(), "[INFO] store bond directory already exists\n"; got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
 }
@@ -207,7 +207,7 @@ func TestInitCommandGlobalReturnsErrorWhenPathIsFile(t *testing.T) {
 	cmd.SilenceUsage = true
 	cmd.SetOut(buf)
 	cmd.SetErr(buf)
-	cmd.SetArgs([]string{"--global"})
+	cmd.SetArgs([]string{"--store"})
 
 	err := cmd.Execute()
 	if err == nil {

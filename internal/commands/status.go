@@ -20,7 +20,7 @@ func newStatusCmd() *cobra.Command {
 
 // runStatus inspects project skill entries and prints status details.
 func runStatus(cmd *cobra.Command, args []string) error {
-	globalDir, err := config.GlobalSkillsDir()
+	storeDir, err := config.StoreSkillsDir()
 	if err != nil {
 		return err
 	}
@@ -30,7 +30,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	report, err := skills.InspectStatus(globalDir, projectDir)
+	report, err := skills.InspectStatus(storeDir, projectDir)
 	if err != nil {
 		return err
 	}
@@ -38,7 +38,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if err := printOut(cmd, levelInfo, "project %s", report.ProjectSkillsDir); err != nil {
 		return err
 	}
-	if err := printOut(cmd, levelInfo, "global %s", report.GlobalSkillsDir); err != nil {
+	if err := printOut(cmd, levelInfo, "store %s", report.StoreSkillsDir); err != nil {
 		return err
 	}
 

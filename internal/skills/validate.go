@@ -29,9 +29,9 @@ type ValidationResult struct {
 	Issues []ValidationIssue
 }
 
-// ValidateGlobalAll validates all discovered global skills in deterministic name order.
-func ValidateGlobalAll(globalDir string) ([]ValidationResult, error) {
-	discovered, err := Discover(globalDir)
+// ValidateStoreAll validates all discovered store skills in deterministic name order.
+func ValidateStoreAll(storeDir string) ([]ValidationResult, error) {
+	discovered, err := Discover(storeDir)
 	if err != nil {
 		return nil, err
 	}
@@ -47,9 +47,9 @@ func ValidateGlobalAll(globalDir string) ([]ValidationResult, error) {
 	return results, nil
 }
 
-// ValidateGlobalByName validates a single skill by directory basename in globalDir.
-func ValidateGlobalByName(globalDir, name string) (ValidationResult, error) {
-	path, err := findSkillDirByName(globalDir, name)
+// ValidateStoreByName validates a single skill by directory basename in storeDir.
+func ValidateStoreByName(storeDir, name string) (ValidationResult, error) {
+	path, err := findSkillDirByName(storeDir, name)
 	if err != nil {
 		return ValidationResult{}, err
 	}
@@ -195,14 +195,14 @@ func extractFrontmatter(contents string) (string, bool) {
 	return "", false
 }
 
-func findSkillDirByName(globalDir, name string) (string, error) {
-	globalAbs, err := filepath.Abs(globalDir)
+func findSkillDirByName(storeDir, name string) (string, error) {
+	storeAbs, err := filepath.Abs(storeDir)
 	if err != nil {
 		return "", err
 	}
 
 	var matches []string
-	walkErr := filepath.WalkDir(globalAbs, func(path string, d fs.DirEntry, walkErr error) error {
+	walkErr := filepath.WalkDir(storeAbs, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			if errors.Is(walkErr, os.ErrNotExist) {
 				return nil
@@ -212,7 +212,7 @@ func findSkillDirByName(globalDir, name string) (string, error) {
 		if !d.IsDir() {
 			return nil
 		}
-		if filepath.Clean(path) == filepath.Clean(globalAbs) {
+		if filepath.Clean(path) == filepath.Clean(storeAbs) {
 			return nil
 		}
 		if filepath.Base(path) == name {
@@ -227,10 +227,10 @@ func findSkillDirByName(globalDir, name string) (string, error) {
 	sort.Strings(matches)
 	switch len(matches) {
 	case 0:
-		return "", fmt.Errorf("skill %q not found in global directory %q", name, globalAbs)
+		return "", fmt.Errorf("skill %q not found in store directory %q", name, storeAbs)
 	case 1:
 		return matches[0], nil
 	default:
-		return "", fmt.Errorf("skill %q is ambiguous in global directory %q", name, globalAbs)
+		return "", fmt.Errorf("skill %q is ambiguous in store directory %q", name, storeAbs)
 	}
 }

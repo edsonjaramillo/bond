@@ -7,7 +7,7 @@ import (
 	"sort"
 )
 
-// DiscoverProjectStorable returns project-local skills that can be stored globally.
+// DiscoverProjectStorable returns project-local skills that can be stored in the store directory.
 // A storable skill is a non-symlink directory directly under projectSkillsDir
 // containing a file named SKILL.md.
 func DiscoverProjectStorable(projectSkillsDir string) ([]Skill, error) {

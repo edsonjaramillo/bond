@@ -105,38 +105,38 @@ func TestValidateSkillDirLengthBounds(t *testing.T) {
 	}
 }
 
-func TestValidateGlobalByNameFindsNestedDir(t *testing.T) {
+func TestValidateStoreByNameFindsNestedDir(t *testing.T) {
 	tmp := t.TempDir()
 	globalDir := filepath.Join(tmp, "global")
 	skillDir := filepath.Join(globalDir, "lang", "go")
 	mustMkdirAllValidate(t, skillDir)
 	mustWriteFileValidate(t, filepath.Join(skillDir, "SKILL.md"), "---\nname: go\ndescription: Go skill\n---\n")
 
-	result, err := ValidateGlobalByName(globalDir, "go")
+	result, err := ValidateStoreByName(globalDir, "go")
 	if err != nil {
-		t.Fatalf("ValidateGlobalByName() error = %v", err)
+		t.Fatalf("ValidateStoreByName() error = %v", err)
 	}
 	if result.Name != "go" {
 		t.Fatalf("result.Name = %q, want go", result.Name)
 	}
 }
 
-func TestValidateGlobalByNameAmbiguousReturnsError(t *testing.T) {
+func TestValidateStoreByNameAmbiguousReturnsError(t *testing.T) {
 	tmp := t.TempDir()
 	globalDir := filepath.Join(tmp, "global")
 	mustMkdirAllValidate(t, filepath.Join(globalDir, "team-a", "go"))
 	mustMkdirAllValidate(t, filepath.Join(globalDir, "team-b", "go"))
 
-	_, err := ValidateGlobalByName(globalDir, "go")
+	_, err := ValidateStoreByName(globalDir, "go")
 	if err == nil {
-		t.Fatal("ValidateGlobalByName() error = nil, want ambiguity error")
+		t.Fatal("ValidateStoreByName() error = nil, want ambiguity error")
 	}
 	if !strings.Contains(err.Error(), "ambiguous") {
-		t.Fatalf("ValidateGlobalByName() error = %q, want ambiguity message", err)
+		t.Fatalf("ValidateStoreByName() error = %q, want ambiguity message", err)
 	}
 }
 
-func TestValidateGlobalAllValidatesDiscoveredSkills(t *testing.T) {
+func TestValidateStoreAllValidatesDiscoveredSkills(t *testing.T) {
 	tmp := t.TempDir()
 	globalDir := filepath.Join(tmp, "global")
 	goDir := filepath.Join(globalDir, "lang", "go")
@@ -147,9 +147,9 @@ func TestValidateGlobalAllValidatesDiscoveredSkills(t *testing.T) {
 	mustWriteFileValidate(t, filepath.Join(goDir, "SKILL.md"), "---\nname: go\ndescription: Go skill\n---\n")
 	mustWriteFileValidate(t, filepath.Join(rustDir, "SKILL.md"), "---\nname: rust\ndescription: \"\"\n---\n")
 
-	results, err := ValidateGlobalAll(globalDir)
+	results, err := ValidateStoreAll(globalDir)
 	if err != nil {
-		t.Fatalf("ValidateGlobalAll() error = %v", err)
+		t.Fatalf("ValidateStoreAll() error = %v", err)
 	}
 	if len(results) != 2 {
 		t.Fatalf("len(results) = %d, want 2", len(results))

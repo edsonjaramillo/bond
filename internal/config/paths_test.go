@@ -17,33 +17,33 @@ func TestProjectDirsFrom(t *testing.T) {
 	}
 }
 
-// TestGlobalSkillsDirPrefersXDG ensures XDG_CONFIG_HOME takes precedence.
-func TestGlobalSkillsDirPrefersXDG(t *testing.T) {
+// TestStoreSkillsDirPrefersXDG ensures XDG_CONFIG_HOME takes precedence.
+func TestStoreSkillsDirPrefersXDG(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "/tmp/xdg")
-	got, err := GlobalSkillsDir()
+	got, err := StoreSkillsDir()
 	if err != nil {
-		t.Fatalf("GlobalSkillsDir() error = %v", err)
+		t.Fatalf("StoreSkillsDir() error = %v", err)
 	}
 	want := filepath.Join("/tmp/xdg", "bond")
 	if got != want {
-		t.Fatalf("GlobalSkillsDir() = %q, want %q", got, want)
+		t.Fatalf("StoreSkillsDir() = %q, want %q", got, want)
 	}
 }
 
-// TestGlobalSkillsDirFallsBackToHome ensures home-based config is used without XDG.
-func TestGlobalSkillsDirFallsBackToHome(t *testing.T) {
+// TestStoreSkillsDirFallsBackToHome ensures home-based config is used without XDG.
+func TestStoreSkillsDirFallsBackToHome(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", "")
 	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatalf("os.UserHomeDir() error = %v", err)
 	}
 
-	got, err := GlobalSkillsDir()
+	got, err := StoreSkillsDir()
 	if err != nil {
-		t.Fatalf("GlobalSkillsDir() error = %v", err)
+		t.Fatalf("StoreSkillsDir() error = %v", err)
 	}
 	want := filepath.Join(home, ".config", "bond")
 	if got != want {
-		t.Fatalf("GlobalSkillsDir() = %q, want %q", got, want)
+		t.Fatalf("StoreSkillsDir() = %q, want %q", got, want)
 	}
 }

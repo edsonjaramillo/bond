@@ -28,13 +28,13 @@ type StatusEntry struct {
 // StatusReport captures the health of project-local skill entries.
 type StatusReport struct {
 	ProjectSkillsDir string
-	GlobalSkillsDir  string
+	StoreSkillsDir   string
 	Entries          []StatusEntry
 }
 
-// InspectStatus classifies project entries against the global skills directory.
-func InspectStatus(globalSkillsDir, projectSkillsDir string) (StatusReport, error) {
-	globalAbs, err := filepath.Abs(globalSkillsDir)
+// InspectStatus classifies project entries against the store skills directory.
+func InspectStatus(storeSkillsDir, projectSkillsDir string) (StatusReport, error) {
+	storeAbs, err := filepath.Abs(storeSkillsDir)
 	if err != nil {
 		return StatusReport{}, err
 	}
@@ -45,7 +45,7 @@ func InspectStatus(globalSkillsDir, projectSkillsDir string) (StatusReport, erro
 
 	report := StatusReport{
 		ProjectSkillsDir: projectAbs,
-		GlobalSkillsDir:  globalAbs,
+		StoreSkillsDir:   storeAbs,
 		Entries:          []StatusEntry{},
 	}
 
@@ -96,7 +96,7 @@ func InspectStatus(globalSkillsDir, projectSkillsDir string) (StatusReport, erro
 		}
 
 		status := StatusExternal
-		if isWithinDir(targetAbs, globalAbs) {
+		if isWithinDir(targetAbs, storeAbs) {
 			status = StatusLinked
 		}
 

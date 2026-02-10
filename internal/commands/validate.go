@@ -8,13 +8,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newValidateCmd builds the command that validates global skill metadata.
+// newValidateCmd builds the command that validates store skill metadata.
 func newValidateCmd() *cobra.Command {
 	var all bool
 
 	cmd := &cobra.Command{
 		Use:   "validate [skill]",
-		Short: "Validate skills in the global directory",
+		Short: "Validate skills in the store directory",
 		Args: func(cmd *cobra.Command, args []string) error {
 			if all {
 				if len(args) > 0 {
@@ -32,26 +32,26 @@ func newValidateCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVar(&all, "all", false, "Validate all discovered global skills")
-	cmd.ValidArgsFunction = completeGlobalSkills
+	cmd.Flags().BoolVar(&all, "all", false, "Validate all discovered store skills")
+	cmd.ValidArgsFunction = completeStoreSkills
 	return cmd
 }
 
-// runValidate validates one or all global skills and reports violations.
+// runValidate validates one or all store skills and reports violations.
 func runValidate(cmd *cobra.Command, args []string, all bool) error {
-	globalDir, err := config.GlobalSkillsDir()
+	storeDir, err := config.StoreSkillsDir()
 	if err != nil {
 		return err
 	}
 
 	results := []skills.ValidationResult{}
 	if all {
-		results, err = skills.ValidateGlobalAll(globalDir)
+		results, err = skills.ValidateStoreAll(storeDir)
 		if err != nil {
 			return err
 		}
 	} else {
-		result, err := skills.ValidateGlobalByName(globalDir, args[0])
+		result, err := skills.ValidateStoreByName(storeDir, args[0])
 		if err != nil {
 			return err
 		}

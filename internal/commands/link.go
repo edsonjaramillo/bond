@@ -10,22 +10,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// newLinkCmd builds the command that links global skills into the project.
+// newLinkCmd builds the command that links store skills into the project.
 func newLinkCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "link [skill ...]",
-		Short: "Symlink global skills into ./.agents/skills",
+		Short: "Symlink store skills into ./.agents/skills",
 		Args:  cobra.MinimumNArgs(1),
 		RunE:  runLink,
 	}
 
-	cmd.ValidArgsFunction = completeGlobalSkills
+	cmd.ValidArgsFunction = completeStoreSkills
 	return cmd
 }
 
 // runLink executes link operations and prints per-skill status.
 func runLink(cmd *cobra.Command, args []string) error {
-	sourceDir, err := config.GlobalSkillsDir()
+	sourceDir, err := config.StoreSkillsDir()
 	if err != nil {
 		return err
 	}
@@ -100,9 +100,9 @@ func selectSkills(discovered []skills.Skill, args []string) []skills.Skill {
 	return selected
 }
 
-// completeGlobalSkills offers shell completions from globally discovered skills.
-func completeGlobalSkills(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-	sourceDir, err := config.GlobalSkillsDir()
+// completeStoreSkills offers shell completions from discovered store skills.
+func completeStoreSkills(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	sourceDir, err := config.StoreSkillsDir()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}

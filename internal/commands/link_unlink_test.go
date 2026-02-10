@@ -111,7 +111,7 @@ func TestCompleteGlobalSkillsFindsNestedSkillMarkers(t *testing.T) {
 
 	t.Setenv("XDG_CONFIG_HOME", xdgConfig)
 
-	candidates, directive := completeGlobalSkills(newLinkCmd(), nil, "")
+	candidates, directive := completeStoreSkills(newLinkCmd(), nil, "")
 	if directive == 0 {
 		t.Fatalf("directive = %d, want non-zero no-file-completion directive", directive)
 	}
@@ -146,7 +146,7 @@ func TestCompleteGlobalSkillsDuplicateNamesReturnNoCandidates(t *testing.T) {
 
 	t.Setenv("XDG_CONFIG_HOME", xdgConfig)
 
-	candidates, directive := completeGlobalSkills(newLinkCmd(), nil, "")
+	candidates, directive := completeStoreSkills(newLinkCmd(), nil, "")
 	if directive == 0 {
 		t.Fatalf("directive = %d, want non-zero no-file-completion directive", directive)
 	}
