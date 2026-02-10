@@ -1,0 +1,35 @@
+name: Format
+on:
+  pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: format-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+jobs:
+  format:
+    name: format
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install gofumpt
+        run: go install mvdan.cc/gofumpt@v0.9.2
+      - name: Check formatting
+        shell: bash
+        run: |-
+          set -euo pipefail
+          out="$("$(go env GOPATH)/bin/gofumpt" -l .)"
+          if [ -z "${out}" ]; then
+            echo "All Go files are gofumpt formatted."
+            exit 0
+          fi
+
+          echo "The following files need gofumpt formatting:"
+          printf '%s\n' "${out}"
+          exit 1
