@@ -21,6 +21,9 @@ tasks:
   link:
     cmd: go run {{.MAIN}} link {{.CLI_ARGS}}
     silent: true
+  copy:
+    cmd: go run {{.MAIN}} copy {{.CLI_ARGS}}
+    silent: true
   unlink:
     cmd: go run {{.MAIN}} unlink {{.CLI_ARGS}}
     silent: true

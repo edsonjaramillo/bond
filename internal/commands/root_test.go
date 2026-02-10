@@ -17,3 +17,19 @@ func TestRootRejectsInvalidColorFlagValue(t *testing.T) {
 		t.Fatalf("error = %q, want invalid --color message", err.Error())
 	}
 }
+
+func TestRootRegistersCopyCommand(t *testing.T) {
+	cmd := newRootCmd()
+
+	found := false
+	for _, child := range cmd.Commands() {
+		if child.Name() == "copy" {
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		t.Fatal("newRootCmd() missing copy command")
+	}
+}
