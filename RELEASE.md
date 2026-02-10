@@ -24,7 +24,20 @@ scripts/release-tag.sh v0.2.0
   - `darwin/amd64`
   - `darwin/arm64`
 - `SHA256SUMS` checksum file
+- `install.sh` installer script
 - Auto-generated GitHub release notes
+
+## How users install from releases
+
+See `INSTALL.md` for quick install, pinned versions, and manual verification steps.
+
+Current one-liner:
+
+```bash
+curl -fsSL https://github.com/edsonjaramillo/bond/releases/latest/download/install.sh | sh
+```
+
+Windows artifacts are not published yet.
 
 ## Versioning in code
 

@@ -75,6 +75,8 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -86,10 +88,21 @@ jobs:
           mkdir -p release
           find dist -type f -name '*.tar.gz' -exec cp {} release/ \;
           (cd release && sha256sum *.tar.gz > SHA256SUMS)
+          cp scripts/install.sh release/install.sh
+          chmod +x release/install.sh
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          body: |
+            ## Install
+
+            ```bash
+            curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | sh
+            ```
+
+            For pinned versions and manual install steps, see [INSTALL.md](https://github.com/${{ github.repository }}/blob/main/INSTALL.md).
           files: |-
             release/*.tar.gz
             release/SHA256SUMS
+            release/install.sh
