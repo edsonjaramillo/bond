@@ -25,6 +25,9 @@ tasks:
   copy:
     cmd: go run {{.MAIN}} copy {{.CLI_ARGS}}
     silent: true
+  store:
+    cmd: go run {{.MAIN}} store {{.CLI_ARGS}}
+    silent: true
   unlink:
     cmd: go run {{.MAIN}} unlink {{.CLI_ARGS}}
     silent: true
