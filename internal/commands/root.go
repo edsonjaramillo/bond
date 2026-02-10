@@ -40,6 +40,7 @@ func newRootCmd() *cobra.Command {
 	cmd.AddCommand(newLinkCmd())
 	cmd.AddCommand(newCopyCmd())
 	cmd.AddCommand(newCreateCmd())
+	cmd.AddCommand(newEditCmd())
 	cmd.AddCommand(newStoreCmd())
 	cmd.AddCommand(newStatusCmd())
 	cmd.AddCommand(newUnlinkCmd())
