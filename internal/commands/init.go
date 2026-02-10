@@ -32,13 +32,22 @@ func newInitCmd() *cobra.Command {
 				return err
 			}
 
-			if err := printInitStatus(cmd, ".agents", agentsCreated); err != nil {
-				return err
+			createdCount := 0
+			if agentsCreated {
+				createdCount++
 			}
-			if err := printInitStatus(cmd, ".agents/skills", skillsCreated); err != nil {
-				return err
+			if skillsCreated {
+				createdCount++
 			}
-			return nil
+
+			level := levelInfo
+			message := ".agents/skills already exists"
+			if createdCount > 0 {
+				level = levelOK
+				message = "initialized .agents/skills"
+			}
+
+			return printOut(cmd, level, message)
 		},
 	}
 }
@@ -58,12 +67,4 @@ func ensureDir(path string) (bool, error) {
 		return false, err
 	}
 	return true, nil
-}
-
-// printInitStatus prints a consistent status line for init directory checks.
-func printInitStatus(cmd *cobra.Command, label string, created bool) error {
-	if created {
-		return printOut(cmd, levelOK, "created %s", label)
-	}
-	return printOut(cmd, levelInfo, "already exists %s", label)
 }
