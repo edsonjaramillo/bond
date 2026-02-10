@@ -17,7 +17,8 @@ func newRootCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:           "bond",
-		Short:         "Manage project-local skill links",
+		Short:         "Manage reusable agent skills across your store and projects",
+		Long:          "Bond helps you create, validate, and share agent skills by syncing them from your store into project .agents/skills directories.",
 		Version:       Version,
 		SilenceUsage:  true,
 		SilenceErrors: true,
