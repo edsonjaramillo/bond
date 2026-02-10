@@ -5,6 +5,7 @@ vars:
   MAIN: cmd/main.go
   BIN_DIR: ~/.sh/bin
   EXECUTABLE: bond
+  VERSION: dev
 tasks:
   default:
     cmd: go run {{.MAIN}} {{.CLI_ARGS}}
@@ -33,8 +34,7 @@ tasks:
   build:
     cmds:
       - mkdir -p {{.BIN_DIR}}
-      - go build -ldflags="-s -w" -o {{.EXECUTABLE}} {{.MAIN}}
-      - mv {{.EXECUTABLE}} {{.BIN_DIR}}
+      - go build -ldflags="-s -w -X bond/internal/commands.Version={{.VERSION}}" -o {{.BIN_DIR}}/{{.EXECUTABLE}} {{.MAIN}}
     silent: true
   test:
     cmd: go test ./...
