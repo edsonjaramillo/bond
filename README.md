@@ -69,8 +69,9 @@ bond completion fish | source
 
 Environment variables affecting global output:
 
-- `NO_COLOR`: when set (to any value), color is disabled if `--color` is `auto`.
-- `--no-level`: no environment-variable equivalent.
+- `BOND_NO_COLORS`: when set (to any value), color is disabled if `--color` is `auto`.
+- `BOND_NO_LEVEL`: boolean (`true`/`false`, `1`/`0`) to hide or show INFO/OK/WARN/ERROR labels.
+- Command-line flags override environment variables when both are set.
 
 ### Story walkthrough: from empty project to managed skills
 
