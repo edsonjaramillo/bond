@@ -1,6 +1,9 @@
 name: Format
 on:
   pull_request:
+    paths:
+      - "**/*.go"
+      - ".github/workflows/format.yml"
 permissions:
   contents: read
 concurrency:
