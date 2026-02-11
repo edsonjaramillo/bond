@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -20,6 +21,11 @@ const (
 	colorModeAuto   = "auto"
 	colorModeAlways = "always"
 	colorModeNever  = "never"
+)
+
+const (
+	envColorDisable = "BOND_NO_COLORS"
+	envNoLevel      = "BOND_NO_LEVEL"
 )
 
 const (
@@ -53,6 +59,18 @@ func setOutputShowLevel(show bool) {
 	outputShowLevel = show
 }
 
+func parseNoLevelEnv() (bool, bool, error) {
+	raw, ok := os.LookupEnv(envNoLevel)
+	if !ok {
+		return false, false, nil
+	}
+	parsed, err := strconv.ParseBool(strings.TrimSpace(raw))
+	if err != nil {
+		return false, true, fmt.Errorf("invalid value for %s: %q (want a boolean)", envNoLevel, raw)
+	}
+	return parsed, true, nil
+}
+
 func shouldColorize(w io.Writer, mode string) bool {
 	switch mode {
 	case colorModeAlways:
@@ -60,7 +78,7 @@ func shouldColorize(w io.Writer, mode string) bool {
 	case colorModeNever:
 		return false
 	case colorModeAuto:
-		if _, disabled := os.LookupEnv("NO_COLOR"); disabled {
+		if _, disabled := os.LookupEnv(envColorDisable); disabled {
 			return false
 		}
 		return isTTY(w)

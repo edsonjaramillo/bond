@@ -27,8 +27,21 @@ func newRootCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			showLevel := true
+			noLevelFromEnv, envSet, err := parseNoLevelEnv()
+			if err != nil {
+				return err
+			}
+			if envSet {
+				showLevel = !noLevelFromEnv
+			}
+			if cmd.Flags().Changed("no-level") {
+				showLevel = !noLevelFlag
+			}
+
 			setOutputColorMode(mode)
-			setOutputShowLevel(!noLevelFlag)
+			setOutputShowLevel(showLevel)
 			return nil
 		},
 	}

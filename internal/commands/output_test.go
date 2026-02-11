@@ -3,6 +3,7 @@ package commands
 import (
 	"bytes"
 	"errors"
+	"os"
 	"testing"
 
 	"bond/internal/skills"
@@ -160,10 +161,10 @@ func TestPrintOutAlwaysColorsLevel(t *testing.T) {
 	}
 }
 
-func TestPrintOutAlwaysIgnoresNoColor(t *testing.T) {
+func TestPrintOutAlwaysIgnoresBondNoColors(t *testing.T) {
 	withOutputColorMode(t, colorModeAlways)
 	withOutputShowLevel(t, true)
-	t.Setenv("NO_COLOR", "1")
+	t.Setenv(envColorDisable, "1")
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -180,10 +181,10 @@ func TestPrintOutAlwaysIgnoresNoColor(t *testing.T) {
 	}
 }
 
-func TestPrintOutAutoHonorsNoColor(t *testing.T) {
+func TestPrintOutAutoHonorsBondNoColors(t *testing.T) {
 	withOutputColorMode(t, colorModeAuto)
 	withOutputShowLevel(t, true)
-	t.Setenv("NO_COLOR", "1")
+	t.Setenv(envColorDisable, "1")
 
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -197,6 +198,59 @@ func TestPrintOutAutoHonorsNoColor(t *testing.T) {
 
 	if got, want := stdout.String(), "[WARN] conflict go\n"; got != want {
 		t.Fatalf("stdout = %q, want %q", got, want)
+	}
+}
+
+func TestParseNoLevelEnv(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		setEnv  bool
+		wantNo  bool
+		wantSet bool
+		wantErr bool
+	}{
+		{name: "unset", setEnv: false, wantNo: false, wantSet: false, wantErr: false},
+		{name: "true", value: "true", setEnv: true, wantNo: true, wantSet: true, wantErr: false},
+		{name: "one", value: "1", setEnv: true, wantNo: true, wantSet: true, wantErr: false},
+		{name: "false", value: "false", setEnv: true, wantNo: false, wantSet: true, wantErr: false},
+		{name: "invalid", value: "maybe", setEnv: true, wantNo: false, wantSet: true, wantErr: true},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			prev, hadPrev := os.LookupEnv(envNoLevel)
+			t.Cleanup(func() {
+				if hadPrev {
+					_ = os.Setenv(envNoLevel, prev)
+					return
+				}
+				_ = os.Unsetenv(envNoLevel)
+			})
+
+			if tc.setEnv {
+				t.Setenv(envNoLevel, tc.value)
+			} else {
+				_ = os.Unsetenv(envNoLevel)
+			}
+			gotNoLevel, gotSet, err := parseNoLevelEnv()
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("parseNoLevelEnv() error = nil, want non-nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseNoLevelEnv() error = %v", err)
+			}
+			if gotNoLevel != tc.wantNo {
+				t.Fatalf("parseNoLevelEnv() no-level = %v, want %v", gotNoLevel, tc.wantNo)
+			}
+			if gotSet != tc.wantSet {
+				t.Fatalf("parseNoLevelEnv() set = %v, want %v", gotSet, tc.wantSet)
+			}
+		})
 	}
 }
 
