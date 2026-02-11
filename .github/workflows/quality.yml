@@ -1,6 +1,12 @@
 name: Quality
 on:
   pull_request:
+    paths:
+      - "**/*.go"
+      - "go.mod"
+      - "go.sum"
+      - ".golangci.yaml"
+      - ".github/workflows/quality.yml"
 permissions:
   contents: read
 concurrency:
