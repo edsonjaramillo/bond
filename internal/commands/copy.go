@@ -3,7 +3,6 @@ package commands
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	"bond/internal/config"
 	"bond/internal/skills"
@@ -43,38 +42,20 @@ func runCopy(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	selected := selectSkills(discovered, args)
-	if len(selected) == 0 {
-		return fmt.Errorf("no matching skills: %s", strings.Join(args, ", "))
-	}
-
-	var hardErrs int
-	for _, skill := range selected {
+	return runDiscoveredSkillActions(cmd, discovered, args, func(skill skills.Skill) (skillActionOutput, error) {
 		dest := filepath.Join(skillsDir, skill.Name)
 		result, err := skills.Copy(skill.Path, dest)
 		if err != nil {
-			hardErrs++
-			if printErrErr := printErr(cmd, levelError, "%s: %v", skill.Name, err); printErrErr != nil {
-				return printErrErr
-			}
-			continue
+			return skillActionOutput{}, err
 		}
 
 		switch result.Status {
 		case skills.CopyStatusCopied:
-			if err := printOut(cmd, levelOK, "copied %s", skill.Name); err != nil {
-				return err
-			}
+			return skillActionOutput{level: levelOK, message: fmt.Sprintf("copied %s", skill.Name)}, nil
 		case skills.CopyStatusConflict:
-			if err := printOut(cmd, levelWarn, "skipped %s (already exists)", skill.Name); err != nil {
-				return err
-			}
+			return skillActionOutput{level: levelWarn, message: fmt.Sprintf("skipped %s (already exists)", skill.Name)}, nil
+		default:
+			return skillActionOutput{}, fmt.Errorf("unexpected copy status %q for %q", result.Status, skill.Name)
 		}
-	}
-
-	if hardErrs > 0 {
-		return alreadyReportedFailure()
-	}
-
-	return nil
+	})
 }

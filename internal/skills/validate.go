@@ -6,15 +6,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
 	"gopkg.in/yaml.v3"
 )
-
-var skillNamePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // ValidationIssue describes a single validation rule violation.
 type ValidationIssue struct {
@@ -118,14 +115,14 @@ func ValidateSkillDir(skillDir string) (ValidationResult, error) {
 			Message: `frontmatter field "name" is required and must be a non-empty string`,
 		})
 	} else {
-		nameLen := utf8.RuneCountInString(name)
-		if nameLen > 64 {
+		nameCheck := CheckSkillName(name)
+		if nameCheck.TooLong {
 			result.Issues = append(result.Issues, ValidationIssue{
 				Rule:    "name",
-				Message: fmt.Sprintf(`frontmatter field "name" is %d characters; maximum is 64`, nameLen),
+				Message: fmt.Sprintf(`frontmatter field "name" is %d characters; maximum is %d`, nameCheck.RuneCount, SkillNameMaxRunes),
 			})
 		}
-		if !skillNamePattern.MatchString(name) {
+		if nameCheck.InvalidFormat {
 			result.Issues = append(result.Issues, ValidationIssue{
 				Rule:    "name",
 				Message: `frontmatter field "name" must use lowercase letters, numbers, and single hyphens only (for example: "go", "web-api")`,

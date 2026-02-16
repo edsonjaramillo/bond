@@ -3,7 +3,6 @@ package commands
 import (
 	"fmt"
 	"path/filepath"
-	"strings"
 
 	"bond/internal/config"
 	"bond/internal/skills"
@@ -43,44 +42,24 @@ func runLink(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	selected := selectSkills(discovered, args)
-	if len(selected) == 0 {
-		return fmt.Errorf("no matching skills: %s", strings.Join(args, ", "))
-	}
-
-	var hardErrs int
-	for _, skill := range selected {
+	return runDiscoveredSkillActions(cmd, discovered, args, func(skill skills.Skill) (skillActionOutput, error) {
 		dest := filepath.Join(skillsDir, skill.Name)
 		result, err := skills.Link(skill.Path, dest)
 		if err != nil {
-			hardErrs++
-			if printErrErr := printErr(cmd, levelError, "%s: %v", skill.Name, err); printErrErr != nil {
-				return printErrErr
-			}
-			continue
+			return skillActionOutput{}, err
 		}
 
 		switch result.Status {
 		case skills.LinkStatusLinked:
-			if err := printOut(cmd, levelOK, "linked %s", skill.Name); err != nil {
-				return err
-			}
+			return skillActionOutput{level: levelOK, message: fmt.Sprintf("linked %s", skill.Name)}, nil
 		case skills.LinkStatusAlreadyLinked:
-			if err := printOut(cmd, levelInfo, "already linked %s", skill.Name); err != nil {
-				return err
-			}
+			return skillActionOutput{level: levelInfo, message: fmt.Sprintf("already linked %s", skill.Name)}, nil
 		case skills.LinkStatusConflict:
-			if err := printOut(cmd, levelWarn, "conflict %s", skill.Name); err != nil {
-				return err
-			}
+			return skillActionOutput{level: levelWarn, message: fmt.Sprintf("conflict %s", skill.Name)}, nil
+		default:
+			return skillActionOutput{}, fmt.Errorf("unexpected link status %q for %q", result.Status, skill.Name)
 		}
-	}
-
-	if hardErrs > 0 {
-		return alreadyReportedFailure()
-	}
-
-	return nil
+	})
 }
 
 // selectSkills maps CLI args to discovered skills, preserving arg order.

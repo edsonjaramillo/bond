@@ -4,18 +4,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
-	"unicode/utf8"
 
 	"bond/internal/config"
+	"bond/internal/skills"
 	"github.com/spf13/cobra"
 )
 
 const defaultCreateDescription = "TODO: describe this skill"
-
-var createSkillNamePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // newCreateCmd builds the command that scaffolds a new store skill directory.
 func newCreateCmd() *cobra.Command {
@@ -80,14 +77,14 @@ func runCreate(cmd *cobra.Command, name, description string, descriptionProvided
 }
 
 func validateCreateSkillName(name string) error {
-	nameLen := utf8.RuneCountInString(name)
-	if nameLen == 0 {
+	nameCheck := skills.CheckSkillName(name)
+	if nameCheck.Empty {
 		return fmt.Errorf("skill name must not be empty")
 	}
-	if nameLen > 64 {
-		return fmt.Errorf("skill name %q is %d characters; maximum is 64", name, nameLen)
+	if nameCheck.TooLong {
+		return fmt.Errorf("skill name %q is %d characters; maximum is %d", name, nameCheck.RuneCount, skills.SkillNameMaxRunes)
 	}
-	if !createSkillNamePattern.MatchString(name) {
+	if nameCheck.InvalidFormat {
 		return fmt.Errorf("skill name %q must use lowercase letters, numbers, and single hyphens only", name)
 	}
 	return nil
