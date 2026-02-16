@@ -53,15 +53,11 @@ func DiscoverProjectAll(projectSkillsDir string) ([]Skill, error) {
 			continue
 		}
 
-		markerPath := filepath.Join(checkPath, "SKILL.md")
-		markerInfo, err := os.Stat(markerPath)
+		hasMarker, err := hasSkillMarker(checkPath)
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
 			return nil, err
 		}
-		if markerInfo.IsDir() {
+		if !hasMarker {
 			continue
 		}
 
@@ -110,15 +106,11 @@ func DiscoverProjectStorable(projectSkillsDir string) ([]Skill, error) {
 			continue
 		}
 
-		markerPath := filepath.Join(skillPath, "SKILL.md")
-		markerInfo, err := os.Stat(markerPath)
+		hasMarker, err := hasSkillMarker(skillPath)
 		if err != nil {
-			if errors.Is(err, os.ErrNotExist) {
-				continue
-			}
 			return nil, err
 		}
-		if markerInfo.IsDir() {
+		if !hasMarker {
 			continue
 		}
 
