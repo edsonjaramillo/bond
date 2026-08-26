@@ -93,6 +93,7 @@ func newSkillsCommand(invocation Invocation) *cobra.Command {
 	}
 	command.AddCommand(newListCommand(invocation))
 	command.AddCommand(newSkillDraftCommand(invocation))
+	command.AddCommand(newAddCommand(invocation))
 	command.AddCommand(newEditCommand(invocation))
 
 	return command
@@ -105,6 +106,17 @@ func newSkillDraftCommand(invocation Invocation) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(command *cobra.Command, arguments []string) error {
 			return newSkillDraft(command, invocation, arguments[0])
+		},
+	}
+}
+
+func newAddCommand(invocation Invocation) *cobra.Command {
+	return &cobra.Command{
+		Use:   "add <stored-path>",
+		Short: "Install a Stored Skill",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, arguments []string) error {
+			return addLinkedSkill(command, invocation, arguments[0])
 		},
 	}
 }

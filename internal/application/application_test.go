@@ -851,6 +851,124 @@ func TestNewAcceptsValidContentAfterEditorExits(t *testing.T) {
 	}
 }
 
+func TestAddInstallsOneStoredSkillAsAnAbsoluteManagedLink(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+	source := filepath.Join(store, "frontend", "review")
+	writeSkill(t, source, "review", "Frontend review")
+	project := t.TempDir()
+
+	got := runApplicationInDirectory(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "skills", "add", "frontend/review")
+
+	if got.exitCode != 0 || got.stdout != "" || got.stderr != "" {
+		t.Fatalf("exit code = %d, stdout = %q, stderr = %q; want silent success", got.exitCode, got.stdout, got.stderr)
+	}
+	destination := filepath.Join(project, ".agents", "skills", "review")
+	target, err := os.Readlink(destination)
+	if err != nil {
+		t.Fatalf("read installed Project Skill link: %v", err)
+	}
+	if target != source || !filepath.IsAbs(target) {
+		t.Errorf("link target = %q, want absolute source %q", target, source)
+	}
+	manifest, err := os.ReadFile(filepath.Join(project, ".agents", "bond-manifest.json"))
+	if err != nil {
+		t.Fatalf("read manifest: %v", err)
+	}
+	want := "{\n  \"version\": 1,\n  \"skills\": [\n    {\n      \"name\": \"review\",\n      \"source\": \"frontend/review\",\n      \"mode\": \"link\",\n      \"destination\": \".agents/skills/review\"\n    }\n  ]\n}\n"
+	if string(manifest) != want {
+		t.Errorf("manifest = %s, want %s", manifest, want)
+	}
+}
+
+func TestAddValidatesOnlyTheSelectedStoredSkill(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+	writeSkill(t, filepath.Join(store, "review"), "review", "Review changes")
+	writeSkillDocument(t, filepath.Join(store, "unrelated"), []byte("malformed\n"))
+	project := t.TempDir()
+	writeSkillDocument(t, filepath.Join(project, ".agents", "skills", "also-unrelated"), []byte("malformed\n"))
+
+	got := runApplicationInDirectory(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "skills", "add", "review")
+
+	if got.exitCode != 0 || got.stdout != "" || got.stderr != "" {
+		t.Fatalf("exit code = %d, stdout = %q, stderr = %q; want unrelated malformed Skills ignored", got.exitCode, got.stdout, got.stderr)
+	}
+}
+
+func TestAddRejectsDestinationOwnershipAndInvalidManifestsWithoutChangingProject(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name           string
+		manifest       string
+		createExisting bool
+		wantDiagnostic string
+	}{
+		{name: "unmanaged destination", createExisting: true, wantDiagnostic: "already exists"},
+		{name: "stale ownership", manifest: `{"version":1,"skills":[{"name":"review","source":"old/review","mode":"link","destination":".agents/skills/review"}]}`, wantDiagnostic: "ownership"},
+		{name: "corrupt manifest", manifest: `{not json`, wantDiagnostic: "manifest"},
+		{name: "unsupported manifest", manifest: `{"version":2,"skills":[]}`, wantDiagnostic: "version"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			configDirectory := t.TempDir()
+			writeSkill(t, filepath.Join(configDirectory, "bond", "skills", "review"), "review", "Review changes")
+			project := t.TempDir()
+			if test.createExisting {
+				writeSkill(t, filepath.Join(project, ".agents", "skills", "review"), "review", "User maintained")
+			}
+			if test.manifest != "" {
+				if err := os.MkdirAll(filepath.Join(project, ".agents"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(project, ".agents", "bond-manifest.json"), []byte(test.manifest), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			got := runApplicationInDirectory(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "skills", "add", "review")
+
+			if got.exitCode != 1 || got.stdout != "" || !strings.Contains(got.stderr, test.wantDiagnostic) {
+				t.Errorf("exit code = %d, stdout = %q, stderr = %q", got.exitCode, got.stdout, got.stderr)
+			}
+			if test.manifest != "" {
+				contents, err := os.ReadFile(filepath.Join(project, ".agents", "bond-manifest.json"))
+				if err != nil || string(contents) != test.manifest {
+					t.Errorf("manifest changed: contents = %q, err = %v", contents, err)
+				}
+			}
+			if !test.createExisting {
+				if _, err := os.Lstat(filepath.Join(project, ".agents", "skills", "review")); !os.IsNotExist(err) {
+					t.Errorf("destination was created: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestAddRejectsSymlinkedProjectInfrastructure(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	writeSkill(t, filepath.Join(configDirectory, "bond", "skills", "review"), "review", "Review changes")
+	project := t.TempDir()
+	if err := os.Symlink(t.TempDir(), filepath.Join(project, ".agents")); err != nil {
+		t.Fatal(err)
+	}
+
+	got := runApplicationInDirectory(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "skills", "add", "review")
+
+	if got.exitCode != 1 || got.stdout != "" || !strings.Contains(got.stderr, "must not be a symlink") {
+		t.Errorf("exit code = %d, stdout = %q, stderr = %q", got.exitCode, got.stdout, got.stderr)
+	}
+}
+
 func TestFailuresUsePlainStderrWithoutUsage(t *testing.T) {
 	t.Parallel()
 
