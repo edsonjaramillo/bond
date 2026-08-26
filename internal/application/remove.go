@@ -46,6 +46,12 @@ func removeSkills(command *cobra.Command, invocation Invocation, names []string)
 	if err != nil {
 		return err
 	}
+
+	return removePreflightedSkills(invocation, requests, manifest, nextManifest)
+}
+
+func removePreflightedSkills(invocation Invocation, requests []requestedRemoval, manifest, nextManifest projectManifest) error {
+	agentsDirectory := filepath.Join(invocation.WorkingDirectory, ".agents")
 	stageDirectory, err := os.MkdirTemp(agentsDirectory, ".bond-stage-")
 	if err != nil {
 		return fmt.Errorf("create Project transaction staging: %w", err)

@@ -1636,6 +1636,247 @@ func TestAddRejectsSymlinkedProjectInfrastructure(t *testing.T) {
 	}
 }
 
+func TestClearAcceptsNoArgumentsAndLeavesUninitializedProjectUntouched(t *testing.T) {
+	t.Parallel()
+
+	project := t.TempDir()
+
+	got := runApplicationInDirectory(t, project, []string{"HOME=" + t.TempDir()}, "", "skills", "clear")
+
+	if got.exitCode != 0 || got.stdout != "" || got.stderr != "" {
+		t.Fatalf("exit code = %d, stdout = %q, stderr = %q; want silent success", got.exitCode, got.stdout, got.stderr)
+	}
+	if entries, err := os.ReadDir(project); err != nil || len(entries) != 0 {
+		t.Errorf("uninitialized Project entries = %v, err = %v; want none", entries, err)
+	}
+
+	withArgument := runApplicationInDirectory(t, project, nil, "", "skills", "clear", "review")
+	if withArgument.exitCode != 1 || withArgument.stdout != "" || withArgument.stderr == "" {
+		t.Errorf("clear with argument: exit code = %d, stdout = %q, stderr = %q; want argument error", withArgument.exitCode, withArgument.stdout, withArgument.stderr)
+	}
+}
+
+func TestClearLocksBeforeDecidingAnUninitializedProjectHasNothingToDo(t *testing.T) {
+	project := t.TempDir()
+	lockedDirectory, err := os.Open(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := lockedDirectory.Close(); err != nil {
+			t.Errorf("close locked Project: %v", err)
+		}
+	})
+	if err := syscall.Flock(int(lockedDirectory.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := syscall.Flock(int(lockedDirectory.Fd()), syscall.LOCK_UN); err != nil {
+			t.Errorf("unlock Project: %v", err)
+		}
+	})
+
+	got := runApplicationWithDependencies(t, project, nil, "", Dependencies{ProjectLockTimeout: 25 * time.Millisecond}, "skills", "clear")
+
+	if got.exitCode != 1 || got.stdout != "" || !strings.Contains(got.stderr, "locked") {
+		t.Errorf("exit code = %d, stdout = %q, stderr = %q; want lock timeout", got.exitCode, got.stdout, got.stderr)
+	}
+	if entries, err := os.ReadDir(project); err != nil || len(entries) != 0 {
+		t.Errorf("uninitialized Project entries = %v, err = %v; want no created lock state", entries, err)
+	}
+}
+
+func TestClearRejectsOrphanedTransactionStaging(t *testing.T) {
+	t.Parallel()
+
+	project := t.TempDir()
+	stageDirectory := filepath.Join(project, ".agents", ".bond-stage-orphaned")
+	if err := os.MkdirAll(stageDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := runApplicationInDirectory(t, project, nil, "", "skills", "clear")
+
+	if got.exitCode != 1 || got.stdout != "" || !strings.Contains(got.stderr, "unresolved") {
+		t.Errorf("exit code = %d, stdout = %q, stderr = %q; want unresolved-state error", got.exitCode, got.stdout, got.stderr)
+	}
+	if info, err := os.Stat(stageDirectory); err != nil || !info.IsDir() {
+		t.Errorf("orphaned staging was changed: info = %v, err = %v", info, err)
+	}
+}
+
+func TestClearRemovesOnlyManagedSkillsAndRetainsInitializedInfrastructure(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	for _, name := range []string{"linked", "copied"} {
+		writeSkill(t, filepath.Join(configDirectory, "bond", "skills", name), name, name+" Skill")
+	}
+	project := t.TempDir()
+	environment := []string{"XDG_CONFIG_HOME=" + configDirectory}
+	if got := runApplicationInDirectory(t, project, environment, "", "skills", "add", "linked"); got.exitCode != 0 {
+		t.Fatalf("add linked Skill: %q", got.stderr)
+	}
+	if got := runApplicationInDirectory(t, project, environment, "", "skills", "add", "copied", "--copy"); got.exitCode != 0 {
+		t.Fatalf("add copied Skill: %q", got.stderr)
+	}
+	unmanaged := filepath.Join(project, ".agents", "skills", "unmanaged")
+	writeSkill(t, unmanaged, "unmanaged", "User maintained")
+
+	got := runApplicationInDirectory(t, project, environment, "", "skills", "clear")
+
+	if got.exitCode != 0 || got.stdout != "" || got.stderr != "" {
+		t.Fatalf("exit code = %d, stdout = %q, stderr = %q; want silent success", got.exitCode, got.stdout, got.stderr)
+	}
+	for _, name := range []string{"linked", "copied"} {
+		if _, err := os.Lstat(filepath.Join(project, ".agents", "skills", name)); !os.IsNotExist(err) {
+			t.Errorf("Managed Skill %q remains: %v", name, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(unmanaged, "SKILL.md")); err != nil {
+		t.Errorf("unmanaged Project Skill changed: %v", err)
+	}
+	manifestPath := filepath.Join(project, ".agents", "bond-manifest.json")
+	wantManifest := "{\n  \"version\": 1,\n  \"skills\": []\n}\n"
+	if contents, err := os.ReadFile(manifestPath); err != nil || string(contents) != wantManifest {
+		t.Errorf("manifest = %q, err = %v; want empty versioned manifest", contents, err)
+	}
+
+	second := runApplicationInDirectory(t, project, environment, "", "skills", "clear")
+	if second.exitCode != 0 || second.stdout != "" || second.stderr != "" {
+		t.Errorf("clear initialized empty Project: exit code = %d, stdout = %q, stderr = %q", second.exitCode, second.stdout, second.stderr)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".agents", "skills")); err != nil {
+		t.Errorf("Project Skill directory was not retained: %v", err)
+	}
+}
+
+func TestClearHandledFailureRestoresEveryManagedSkillAndManifest(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	for _, name := range []string{"review", "deploy"} {
+		writeSkill(t, filepath.Join(configDirectory, "bond", "skills", name), name, name+" Skill")
+	}
+	project := t.TempDir()
+	environment := []string{"XDG_CONFIG_HOME=" + configDirectory}
+	if got := runApplicationInDirectory(t, project, environment, "", "skills", "add", "review", "deploy", "--copy"); got.exitCode != 0 {
+		t.Fatalf("add Skills: %q", got.stderr)
+	}
+	manifestPath := filepath.Join(project, ".agents", "bond-manifest.json")
+	before, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := runApplicationWithDependencies(t, project, environment, "", Dependencies{TransactionFailurePoint: afterFirstRemoval}, "skills", "clear")
+
+	if got.exitCode != 1 || got.stdout != "" || got.stderr == "" {
+		t.Fatalf("exit code = %d, stdout = %q, stderr = %q; want handled failure", got.exitCode, got.stdout, got.stderr)
+	}
+	for _, name := range []string{"review", "deploy"} {
+		if _, err := os.Stat(filepath.Join(project, ".agents", "skills", name, "SKILL.md")); err != nil {
+			t.Errorf("Managed Skill %q was not restored: %v", name, err)
+		}
+	}
+	if after, err := os.ReadFile(manifestPath); err != nil || !bytes.Equal(after, before) {
+		t.Errorf("manifest changed: before = %q, after = %q, err = %v", before, after, err)
+	}
+	if _, err := os.Lstat(filepath.Join(project, ".agents", "bond-journal.json")); !os.IsNotExist(err) {
+		t.Errorf("transaction journal remains: %v", err)
+	}
+}
+
+func TestClearRecoversInterruptionsAtEveryJournaledPhase(t *testing.T) {
+	for _, test := range []struct {
+		name              string
+		interruptionPoint string
+	}{
+		{name: "journal written", interruptionPoint: afterJournalWrite},
+		{name: "first removal", interruptionPoint: afterFirstRemoval},
+		{name: "all removals", interruptionPoint: afterAllRemovals},
+		{name: "manifest written", interruptionPoint: afterManifestWrite},
+		{name: "staging removed", interruptionPoint: afterStageRemoval},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			configDirectory := t.TempDir()
+			for _, name := range []string{"review", "deploy"} {
+				writeSkill(t, filepath.Join(configDirectory, "bond", "skills", name), name, name+" Skill")
+			}
+			project := t.TempDir()
+			environment := []string{"XDG_CONFIG_HOME=" + configDirectory}
+			if got := runApplicationInDirectory(t, project, environment, "", "skills", "add", "review", "deploy"); got.exitCode != 0 {
+				t.Fatalf("add Skills: %q", got.stderr)
+			}
+
+			interrupted := runApplicationWithDependencies(t, project, environment, "", Dependencies{TransactionInterruptionPoint: test.interruptionPoint}, "skills", "clear")
+			if interrupted.exitCode != 1 || interrupted.stdout != "" || interrupted.stderr == "" {
+				t.Fatalf("interrupted exit code = %d, stdout = %q, stderr = %q", interrupted.exitCode, interrupted.stdout, interrupted.stderr)
+			}
+			if _, err := os.Stat(filepath.Join(project, ".agents", "bond-journal.json")); err != nil {
+				t.Fatalf("transaction journal was not retained: %v", err)
+			}
+
+			recovered := runApplicationInDirectory(t, project, environment, "", "skills", "clear")
+			if recovered.exitCode != 0 || recovered.stdout != "" || recovered.stderr != "" {
+				t.Fatalf("recovery exit code = %d, stdout = %q, stderr = %q", recovered.exitCode, recovered.stdout, recovered.stderr)
+			}
+			for _, name := range []string{"review", "deploy"} {
+				if _, err := os.Lstat(filepath.Join(project, ".agents", "skills", name)); !os.IsNotExist(err) {
+					t.Errorf("Managed Skill %q remains: %v", name, err)
+				}
+			}
+			if _, err := os.Lstat(filepath.Join(project, ".agents", "bond-journal.json")); !os.IsNotExist(err) {
+				t.Errorf("transaction journal remains after recovery: %v", err)
+			}
+		})
+	}
+}
+
+func TestClearRejectsUnsafeStateWithoutDeletingManifestOwnedPaths(t *testing.T) {
+	t.Parallel()
+
+	project := t.TempDir()
+	agentsDirectory := filepath.Join(project, ".agents")
+	if err := os.Mkdir(agentsDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outsideSkills := t.TempDir()
+	writeSkill(t, filepath.Join(outsideSkills, "review"), "review", "Outside Project")
+	if err := os.Symlink(outsideSkills, filepath.Join(agentsDirectory, "skills")); err != nil {
+		t.Fatal(err)
+	}
+	manifest := projectManifest{Version: manifestVersion, Skills: []managedSkillRecord{{Name: "review", Source: "review", Mode: copyMode, Destination: ".agents/skills/review"}}}
+	if err := writeProjectManifest(agentsDirectory, manifest); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(agentsDirectory, "bond-manifest.json")
+	before, err := os.ReadFile(manifestPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got := runApplicationInDirectory(t, project, nil, "", "skills", "clear")
+
+	if got.exitCode != 1 || got.stdout != "" || !strings.Contains(got.stderr, "must not be a symlink") {
+		t.Fatalf("exit code = %d, stdout = %q, stderr = %q", got.exitCode, got.stdout, got.stderr)
+	}
+	if _, err := os.Stat(filepath.Join(outsideSkills, "review", "SKILL.md")); err != nil {
+		t.Errorf("unsafe destination target changed: %v", err)
+	}
+	if after, err := os.ReadFile(manifestPath); err != nil || !bytes.Equal(after, before) {
+		t.Errorf("manifest changed: before = %q, after = %q, err = %v", before, after, err)
+	}
+	if matches, err := filepath.Glob(filepath.Join(agentsDirectory, ".bond-stage-*")); err != nil || len(matches) != 0 {
+		t.Errorf("staging paths = %v, err = %v; want none", matches, err)
+	}
+	if _, err := os.Lstat(filepath.Join(agentsDirectory, "bond-journal.json")); !os.IsNotExist(err) {
+		t.Errorf("journal was created: %v", err)
+	}
+}
+
 func TestRemoveDeletesChangedLinkedAndCopiedManagedSkillsAndStaleOwnership(t *testing.T) {
 	t.Parallel()
 

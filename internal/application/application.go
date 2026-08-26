@@ -105,6 +105,7 @@ func newSkillsCommand(invocation Invocation) *cobra.Command {
 	command.AddCommand(newSkillDraftCommand(invocation))
 	command.AddCommand(newAddCommand(invocation))
 	command.AddCommand(newRemoveCommand(invocation))
+	command.AddCommand(newClearCommand(invocation))
 	command.AddCommand(newEditCommand(invocation))
 
 	return command
@@ -149,6 +150,17 @@ func newRemoveCommand(invocation Invocation) *cobra.Command {
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(command *cobra.Command, arguments []string) error {
 			return removeSkills(command, invocation, arguments)
+		},
+	}
+}
+
+func newClearCommand(invocation Invocation) *cobra.Command {
+	return &cobra.Command{
+		Use:   "clear",
+		Short: "Remove all Managed Skills",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			return clearSkills(command, invocation)
 		},
 	}
 }
