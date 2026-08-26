@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 )
@@ -15,22 +16,31 @@ var Version = "dev"
 
 // Invocation contains the process state visible to one application run.
 type Invocation struct {
-	Arguments        []string
-	Environment      []string
-	WorkingDirectory string
-	Stdin            io.Reader
-	Stdout           io.Writer
-	Stderr           io.Writer
+	Arguments                    []string
+	Environment                  []string
+	WorkingDirectory             string
+	Stdin                        io.Reader
+	Stdout                       io.Writer
+	Stderr                       io.Writer
+	projectLockTimeout           time.Duration
+	transactionFailurePoint      string
+	transactionInterruptionPoint string
 }
 
 // Dependencies contains replaceable values supplied by the executable.
 type Dependencies struct {
-	Version string
+	Version                      string
+	ProjectLockTimeout           time.Duration
+	TransactionFailurePoint      string
+	TransactionInterruptionPoint string
 }
 
 // Run executes one Bond invocation and returns its process exit code.
 func Run(ctx context.Context, invocation Invocation, dependencies Dependencies) int {
 	invocation = withDefaultStreams(invocation)
+	invocation.projectLockTimeout = dependencies.ProjectLockTimeout
+	invocation.transactionFailurePoint = dependencies.TransactionFailurePoint
+	invocation.transactionInterruptionPoint = dependencies.TransactionInterruptionPoint
 	version := dependencies.Version
 	if version == "" {
 		version = Version
@@ -112,11 +122,11 @@ func newSkillDraftCommand(invocation Invocation) *cobra.Command {
 
 func newAddCommand(invocation Invocation) *cobra.Command {
 	return &cobra.Command{
-		Use:   "add <stored-path>",
-		Short: "Install a Stored Skill",
-		Args:  cobra.ExactArgs(1),
+		Use:   "add <stored-path>...",
+		Short: "Install Stored Skills",
+		Args:  cobra.MinimumNArgs(1),
 		RunE: func(command *cobra.Command, arguments []string) error {
-			return addLinkedSkill(command, invocation, arguments[0])
+			return addLinkedSkills(command, invocation, arguments)
 		},
 	}
 }

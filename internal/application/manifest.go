@@ -129,27 +129,8 @@ func writeProjectManifest(agentsDirectory string, manifest projectManifest) erro
 	}
 	contents = append(contents, '\n')
 
-	temporary, err := os.CreateTemp(agentsDirectory, ".bond-manifest-*")
-	if err != nil {
-		return fmt.Errorf("create temporary Project manifest: %w", err)
-	}
-	temporaryPath := temporary.Name()
-
-	if err := temporary.Chmod(0o644); err != nil {
-		_ = temporary.Close()
-
-		return removeTemporaryManifest(temporaryPath, fmt.Errorf("set Project manifest permissions: %w", err))
-	}
-	if _, err := temporary.Write(contents); err != nil {
-		_ = temporary.Close()
-
-		return removeTemporaryManifest(temporaryPath, fmt.Errorf("write Project manifest: %w", err))
-	}
-	if err := temporary.Close(); err != nil {
-		return removeTemporaryManifest(temporaryPath, fmt.Errorf("close Project manifest: %w", err))
-	}
-	if err := os.Rename(temporaryPath, filepath.Join(agentsDirectory, "bond-manifest.json")); err != nil {
-		return removeTemporaryManifest(temporaryPath, fmt.Errorf("replace Project manifest: %w", err))
+	if err := writeAtomicFile(agentsDirectory, "bond-manifest.json", ".bond-manifest-*", contents); err != nil {
+		return fmt.Errorf("replace Project manifest: %w", err)
 	}
 
 	return nil

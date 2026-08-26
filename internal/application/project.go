@@ -12,6 +12,9 @@ import (
 )
 
 func listProjectSkills(command *cobra.Command, invocation Invocation) error {
+	if err := ensureNoInterruptedTransaction(invocation.WorkingDirectory); err != nil {
+		return err
+	}
 	collection, exists, err := projectSkillCollection(invocation.WorkingDirectory)
 	if err != nil {
 		return err
@@ -40,6 +43,9 @@ func listProjectSkills(command *cobra.Command, invocation Invocation) error {
 }
 
 func editProjectSkill(command *cobra.Command, invocation Invocation, name string) error {
+	if err := ensureNoInterruptedTransaction(invocation.WorkingDirectory); err != nil {
+		return err
+	}
 	if !validProjectSkillBasename(name) {
 		return fmt.Errorf("argument for Project Skill %q must be exactly one directory basename", name)
 	}

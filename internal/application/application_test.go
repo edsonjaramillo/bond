@@ -9,6 +9,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 type result struct {
@@ -32,6 +33,12 @@ func runApplicationWithEnvironment(t *testing.T, environment []string, arguments
 func runApplicationInDirectory(t *testing.T, directory string, environment []string, stdin string, arguments ...string) result {
 	t.Helper()
 
+	return runApplicationWithDependencies(t, directory, environment, stdin, Dependencies{}, arguments...)
+}
+
+func runApplicationWithDependencies(t *testing.T, directory string, environment []string, stdin string, dependencies Dependencies, arguments ...string) result {
+	t.Helper()
+
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
@@ -42,7 +49,7 @@ func runApplicationInDirectory(t *testing.T, directory string, environment []str
 		Stdin:            strings.NewReader(stdin),
 		Stdout:           &stdout,
 		Stderr:           &stderr,
-	}, Dependencies{})
+	}, dependencies)
 
 	return result{
 		exitCode: exitCode,
@@ -949,6 +956,179 @@ func TestAddRejectsDestinationOwnershipAndInvalidManifestsWithoutChangingProject
 				}
 			}
 		})
+	}
+}
+
+func TestAddInstallsMultipleStoredSkillsWithOneManifestTransition(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+	firstSource := filepath.Join(store, "frontend", "review")
+	secondSource := filepath.Join(store, "deploy")
+	writeSkill(t, firstSource, "review", "Review changes")
+	writeSkill(t, secondSource, "deploy", "Deploy changes")
+	project := t.TempDir()
+
+	got := runApplicationInDirectory(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "skills", "add", "frontend/review", "deploy")
+
+	if got.exitCode != 0 || got.stdout != "" || got.stderr != "" {
+		t.Fatalf("exit code = %d, stdout = %q, stderr = %q; want silent success", got.exitCode, got.stdout, got.stderr)
+	}
+	for destination, source := range map[string]string{
+		filepath.Join(project, ".agents", "skills", "review"): firstSource,
+		filepath.Join(project, ".agents", "skills", "deploy"): secondSource,
+	} {
+		target, err := os.Readlink(destination)
+		if err != nil || target != source {
+			t.Errorf("link %q target = %q, err = %v; want %q", destination, target, err, source)
+		}
+	}
+	manifest, err := os.ReadFile(filepath.Join(project, ".agents", "bond-manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(manifest), `"mode": "link"`) != 2 {
+		t.Errorf("manifest = %s, want two linked Managed Skills", manifest)
+	}
+}
+
+func TestAddReportsAllBatchErrorsInArgumentOrderWithoutChangingProject(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+	writeSkillDocument(t, filepath.Join(store, "broken"), []byte("malformed\n"))
+	writeSkill(t, filepath.Join(store, "frontend", "review"), "review", "Frontend review")
+	writeSkill(t, filepath.Join(store, "backend", "review"), "review", "Backend review")
+	writeSkill(t, filepath.Join(store, "deploy"), "deploy", "Deploy changes")
+	project := t.TempDir()
+	writeSkill(t, filepath.Join(project, ".agents", "skills", "deploy"), "deploy", "User maintained")
+
+	got := runApplicationInDirectory(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "skills", "add", "broken", "frontend/review", "backend/review", "frontend/review", "deploy")
+
+	if got.exitCode != 1 || got.stdout != "" {
+		t.Fatalf("exit code = %d, stdout = %q, stderr = %q", got.exitCode, got.stdout, got.stderr)
+	}
+	ordered := []string{"broken:", "backend/review:", "frontend/review:", "deploy:"}
+	position := -1
+	for _, diagnostic := range ordered {
+		next := strings.Index(got.stderr[position+1:], diagnostic)
+		if next < 0 {
+			t.Fatalf("stderr = %q, want diagnostic containing %q", got.stderr, diagnostic)
+		}
+		position += next + 1
+	}
+	if _, err := os.Lstat(filepath.Join(project, ".agents", "skills", "review")); !os.IsNotExist(err) {
+		t.Errorf("batch created review destination: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(project, ".agents", "bond-manifest.json")); !os.IsNotExist(err) {
+		t.Errorf("batch created manifest: %v", err)
+	}
+}
+
+func TestAddHandledPublicationFailureRestoresPriorProjectState(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+	writeSkill(t, filepath.Join(store, "review"), "review", "Review changes")
+	writeSkill(t, filepath.Join(store, "deploy"), "deploy", "Deploy changes")
+	project := t.TempDir()
+
+	got := runApplicationWithDependencies(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", Dependencies{TransactionFailurePoint: afterFirstPublish}, "skills", "add", "review", "deploy")
+
+	if got.exitCode != 1 || got.stdout != "" || got.stderr == "" {
+		t.Fatalf("exit code = %d, stdout = %q, stderr = %q; want handled failure", got.exitCode, got.stdout, got.stderr)
+	}
+	if _, err := os.Lstat(filepath.Join(project, ".agents")); !os.IsNotExist(err) {
+		t.Errorf("Project state was not restored: %v", err)
+	}
+}
+
+func TestAddRecoversInterruptedPublicationBeforeNextMutation(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+	writeSkill(t, filepath.Join(store, "review"), "review", "Review changes")
+	writeSkill(t, filepath.Join(store, "deploy"), "deploy", "Deploy changes")
+	project := t.TempDir()
+	environment := []string{"XDG_CONFIG_HOME=" + configDirectory}
+
+	interrupted := runApplicationWithDependencies(t, project, environment, "", Dependencies{TransactionInterruptionPoint: afterFirstPublish}, "skills", "add", "review", "deploy")
+	if interrupted.exitCode != 1 || interrupted.stdout != "" || interrupted.stderr == "" {
+		t.Fatalf("interrupted exit code = %d, stdout = %q, stderr = %q", interrupted.exitCode, interrupted.stdout, interrupted.stderr)
+	}
+	if _, err := os.Stat(filepath.Join(project, ".agents", "bond-journal.json")); err != nil {
+		t.Fatalf("transaction journal was not retained: %v", err)
+	}
+
+	recovered := runApplicationInDirectory(t, project, environment, "", "skills", "add", "review", "deploy")
+	if recovered.exitCode != 0 || recovered.stdout != "" || recovered.stderr != "" {
+		t.Fatalf("recovered exit code = %d, stdout = %q, stderr = %q", recovered.exitCode, recovered.stdout, recovered.stderr)
+	}
+	for _, name := range []string{"review", "deploy"} {
+		if _, err := os.Readlink(filepath.Join(project, ".agents", "skills", name)); err != nil {
+			t.Errorf("Project Skill %q was not installed after recovery: %v", name, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(project, ".agents", "bond-journal.json")); !os.IsNotExist(err) {
+		t.Errorf("transaction journal remains after recovery: %v", err)
+	}
+}
+
+func TestAddReportsDestinationErrorsAlongsideCorruptManifest(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	writeSkill(t, filepath.Join(configDirectory, "bond", "skills", "review"), "review", "Review changes")
+	project := t.TempDir()
+	writeSkill(t, filepath.Join(project, ".agents", "skills", "review"), "review", "User maintained")
+	manifestPath := filepath.Join(project, ".agents", "bond-manifest.json")
+	if err := os.WriteFile(manifestPath, []byte("{not json"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := runApplicationInDirectory(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "skills", "add", "review")
+
+	if got.exitCode != 1 || !strings.Contains(got.stderr, "review: destination") || !strings.Contains(got.stderr, "manifest") {
+		t.Errorf("exit code = %d, stderr = %q; want destination and manifest diagnostics", got.exitCode, got.stderr)
+	}
+}
+
+func TestAddTimesOutOnConcurrentProjectMutation(t *testing.T) {
+	project := t.TempDir()
+	lockedDirectory, err := os.Open(project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := lockedDirectory.Close(); err != nil {
+			t.Errorf("close locked Project: %v", err)
+		}
+	})
+	if err := syscall.Flock(int(lockedDirectory.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := syscall.Flock(int(lockedDirectory.Fd()), syscall.LOCK_UN); err != nil {
+			t.Errorf("unlock Project: %v", err)
+		}
+	})
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	exitCode := Run(context.Background(), Invocation{
+		Arguments:        []string{"skills", "add", "review"},
+		Environment:      []string{"XDG_CONFIG_HOME=" + t.TempDir()},
+		WorkingDirectory: project,
+		Stdout:           &stdout,
+		Stderr:           &stderr,
+	}, Dependencies{ProjectLockTimeout: 25 * time.Millisecond})
+
+	if exitCode != 1 || stdout.String() != "" || !strings.Contains(stderr.String(), project) || !strings.Contains(stderr.String(), "locked") {
+		t.Errorf("exit code = %d, stdout = %q, stderr = %q; want lock timeout naming Project", exitCode, stdout.String(), stderr.String())
 	}
 }
 
