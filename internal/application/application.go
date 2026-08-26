@@ -78,19 +78,42 @@ func newRootCommand(invocation Invocation, version string) *cobra.Command {
 	root.SetOut(invocation.Stdout)
 	root.SetErr(invocation.Stderr)
 
-	root.AddCommand(newSkillsCommand())
+	root.AddCommand(newSkillsCommand(invocation))
 	root.AddCommand(newVersionCommand(version))
 
 	return root
 }
 
-func newSkillsCommand() *cobra.Command {
-	return &cobra.Command{
+func newSkillsCommand(invocation Invocation) *cobra.Command {
+	command := &cobra.Command{
 		Use:   "skills",
 		Short: "Manage skills",
 		Args:  cobra.NoArgs,
 		RunE:  showHelp,
 	}
+	command.AddCommand(newListCommand(invocation))
+
+	return command
+}
+
+func newListCommand(invocation Invocation) *cobra.Command {
+	var store bool
+
+	command := &cobra.Command{
+		Use:   "list",
+		Short: "List skills",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			if !store {
+				return printNoSkillsFound(command.OutOrStdout())
+			}
+
+			return listStoredSkills(command, invocation.Environment)
+		},
+	}
+	command.Flags().BoolVar(&store, "store", false, "list Stored Skills")
+
+	return command
 }
 
 func newVersionCommand(version string) *cobra.Command {

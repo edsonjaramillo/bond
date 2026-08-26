@@ -3,7 +3,11 @@ package application
 import (
 	"bytes"
 	"context"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -16,12 +20,18 @@ type result struct {
 func runApplication(t *testing.T, arguments ...string) result {
 	t.Helper()
 
+	return runApplicationWithEnvironment(t, []string{"HOME=/home/tester"}, arguments...)
+}
+
+func runApplicationWithEnvironment(t *testing.T, environment []string, arguments ...string) result {
+	t.Helper()
+
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
 	exitCode := Run(context.Background(), Invocation{
 		Arguments:        arguments,
-		Environment:      []string{"HOME=/home/tester"},
+		Environment:      environment,
 		WorkingDirectory: "/project",
 		Stdin:            strings.NewReader(""),
 		Stdout:           &stdout,
@@ -119,6 +129,267 @@ func TestCompletionScripts(t *testing.T) {
 				t.Errorf("stderr = %q, want empty", got.stderr)
 			}
 		})
+	}
+}
+
+func writeSkill(t *testing.T, directory, name, description string) {
+	t.Helper()
+
+	contents := "---\nname: " + name + "\ndescription: " + description + "\n---\n"
+	writeSkillDocument(t, directory, []byte(contents))
+}
+
+func writeSkillDocument(t *testing.T, directory string, contents []byte) {
+	t.Helper()
+
+	if err := os.MkdirAll(directory, 0o755); err != nil {
+		t.Fatalf("create Skill directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(directory, "SKILL.md"), contents, 0o644); err != nil {
+		t.Fatalf("write SKILL.md: %v", err)
+	}
+}
+
+func TestMissingStoreListsAsEmptyWithoutCreatingIt(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+
+	got := runApplicationWithEnvironment(
+		t,
+		[]string{"XDG_CONFIG_HOME=" + configDirectory},
+		"skills", "list", "--store",
+	)
+
+	if got.exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr = %q", got.exitCode, got.stderr)
+	}
+	if got.stdout != "No skills found.\n" {
+		t.Errorf("stdout = %q, want %q", got.stdout, "No skills found.\n")
+	}
+	if got.stderr != "" {
+		t.Errorf("stderr = %q, want empty", got.stderr)
+	}
+	if _, err := os.Stat(store); !os.IsNotExist(err) {
+		t.Errorf("Store was created or could not be inspected: %v", err)
+	}
+}
+
+func TestStoreUsesPlatformUserConfigurationDirectoryWithoutXDG(t *testing.T) {
+	t.Parallel()
+
+	home := t.TempDir()
+	configDirectory := filepath.Join(home, ".config")
+	if runtime.GOOS == "darwin" {
+		configDirectory = filepath.Join(home, "Library", "Application Support")
+	}
+	writeSkill(t, filepath.Join(configDirectory, "bond", "skills", "review"), "review", "Review changes")
+
+	got := runApplicationWithEnvironment(t, []string{"HOME=" + home}, "skills", "list", "--store")
+
+	if got.exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr = %q", got.exitCode, got.stderr)
+	}
+	if got.stdout != "review\n" {
+		t.Errorf("stdout = %q, want %q", got.stdout, "review\n")
+	}
+	if got.stderr != "" {
+		t.Errorf("stderr = %q, want empty", got.stderr)
+	}
+}
+
+func TestStoreListingPrintsTopLevelAndOrganizedSkillsInLexicalOrder(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+	writeSkill(t, filepath.Join(store, "zebra"), "zebra", "Top-level Skill")
+	writeSkill(t, filepath.Join(store, "backend", "review"), "review", "Backend review")
+	writeSkill(t, filepath.Join(store, "frontend", "review"), "review", "Frontend review")
+	if err := os.Mkdir(filepath.Join(store, "empty-org"), 0o755); err != nil {
+		t.Fatalf("create empty Organization: %v", err)
+	}
+
+	got := runApplicationWithEnvironment(
+		t,
+		[]string{"XDG_CONFIG_HOME=" + configDirectory},
+		"skills", "list", "--store",
+	)
+
+	if got.exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr = %q", got.exitCode, got.stderr)
+	}
+	if got.stdout != "backend/review\nfrontend/review\nzebra\n" {
+		t.Errorf("stdout = %q, want lexical Store-relative paths", got.stdout)
+	}
+	if got.stderr != "" {
+		t.Errorf("stderr = %q, want empty", got.stderr)
+	}
+}
+
+func TestStoreListingValidatesSkillDocuments(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+	writeSkillDocument(t, filepath.Join(store, "extended"), []byte("---\r\nname: ' extended '\r\ndescription: ' Useful Skill '\r\nmetadata:\r\n  tags: [one, 2]\r\n---\r\nBody\r\n"))
+	writeSkillDocument(t, filepath.Join(store, "bad-yaml"), []byte("---\nname: [\ndescription: broken\n---\n"))
+	writeSkillDocument(t, filepath.Join(store, "invalid-utf8"), append([]byte("---\nname: invalid-utf8\ndescription: invalid\n---\n"), 0xff))
+	writeSkillDocument(t, filepath.Join(store, "no-frontmatter"), []byte("# no frontmatter\n"))
+	writeSkillDocument(t, filepath.Join(store, "not-mapping"), []byte("---\n- name\n- description\n---\n"))
+	writeSkillDocument(t, filepath.Join(store, "missing-name"), []byte("---\ndescription: present\n---\n"))
+	writeSkillDocument(t, filepath.Join(store, "missing-description"), []byte("---\nname: missing-description\n---\n"))
+	writeSkillDocument(t, filepath.Join(store, "non-string"), []byte("---\nname: non-string\ndescription: 42\n---\n"))
+	writeSkillDocument(t, filepath.Join(store, "empty-description"), []byte("---\nname: empty-description\ndescription: '   '\n---\n"))
+	writeSkillDocument(t, filepath.Join(store, "Bad-Name"), []byte("---\nname: Bad-Name\ndescription: invalid name\n---\n"))
+	writeSkillDocument(t, filepath.Join(store, "directory-name"), []byte("---\nname: different-name\ndescription: mismatch\n---\n"))
+	if err := os.MkdirAll(filepath.Join(store, "org", "missing-document"), 0o755); err != nil {
+		t.Fatalf("create Stored Skill without SKILL.md: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(store, "document-directory", "SKILL.md"), 0o755); err != nil {
+		t.Fatalf("create directory in place of SKILL.md: %v", err)
+	}
+	writeSkill(t, filepath.Join(store, "symlink-document-target"), "symlink-document-target", "Target")
+	if err := os.MkdirAll(filepath.Join(store, "org", "symlink-document"), 0o755); err != nil {
+		t.Fatalf("create symlinked document Skill: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(store, "symlink-document-target", "SKILL.md"), filepath.Join(store, "org", "symlink-document", "SKILL.md")); err != nil {
+		t.Fatalf("create symlinked SKILL.md: %v", err)
+	}
+
+	got := runApplicationWithEnvironment(t, []string{"XDG_CONFIG_HOME=" + configDirectory}, "skills", "list", "--store")
+
+	if got.exitCode != 1 {
+		t.Errorf("exit code = %d, want 1", got.exitCode)
+	}
+	if got.stdout != "extended\nsymlink-document-target\n" {
+		t.Errorf("stdout = %q, want valid Stored Skills in lexical order", got.stdout)
+	}
+	for _, malformedPath := range []string{
+		"Bad-Name:", "bad-yaml:", "directory-name:", "document-directory:", "empty-description:",
+		"invalid-utf8:", "missing-description:", "missing-name:", "no-frontmatter:", "non-string:",
+		"not-mapping:", "org/missing-document:", "org/symlink-document:",
+	} {
+		if !strings.Contains(got.stderr, malformedPath) {
+			t.Errorf("stderr = %q, want diagnostic for %q", got.stderr, malformedPath)
+		}
+	}
+}
+
+func TestStoreListingValidatesSkillResources(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+
+	validDirectory := filepath.Join(store, "resource-valid")
+	writeSkill(t, validDirectory, "resource-valid", "Valid resources")
+	if err := os.Mkdir(filepath.Join(validDirectory, "docs"), 0o755); err != nil {
+		t.Fatalf("create resource directory: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(validDirectory, "docs", "guide.txt"), []byte("guide"), 0o644); err != nil {
+		t.Fatalf("write resource file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(validDirectory, "run.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatalf("write executable resource: %v", err)
+	}
+	if err := os.Symlink("docs/guide.txt", filepath.Join(validDirectory, "guide-link")); err != nil {
+		t.Fatalf("create safe file symlink: %v", err)
+	}
+	if err := os.Symlink("docs", filepath.Join(validDirectory, "docs-link")); err != nil {
+		t.Fatalf("create safe directory symlink: %v", err)
+	}
+	if err := os.Symlink("guide-link", filepath.Join(validDirectory, "guide-chain")); err != nil {
+		t.Fatalf("create safe chained symlink: %v", err)
+	}
+
+	outside := filepath.Join(configDirectory, "outside.txt")
+	if err := os.WriteFile(outside, []byte("outside"), 0o644); err != nil {
+		t.Fatalf("write outside target: %v", err)
+	}
+	for _, name := range []string{"absolute-link", "escaping-link", "broken-link", "cyclic-link", "growing-cycle", "special-entry"} {
+		writeSkill(t, filepath.Join(store, name), name, "Invalid resource")
+	}
+	if err := os.Symlink(filepath.Join(validDirectory, "docs", "guide.txt"), filepath.Join(store, "absolute-link", "resource")); err != nil {
+		t.Fatalf("create absolute resource symlink: %v", err)
+	}
+	if err := os.Symlink(filepath.Join("..", "..", "..", "outside.txt"), filepath.Join(store, "escaping-link", "resource")); err != nil {
+		t.Fatalf("create escaping resource symlink: %v", err)
+	}
+	if err := os.Symlink("absent", filepath.Join(store, "broken-link", "resource")); err != nil {
+		t.Fatalf("create broken resource symlink: %v", err)
+	}
+	if err := os.Symlink("second", filepath.Join(store, "cyclic-link", "first")); err != nil {
+		t.Fatalf("create first cyclic resource symlink: %v", err)
+	}
+	if err := os.Symlink("first", filepath.Join(store, "cyclic-link", "second")); err != nil {
+		t.Fatalf("create second cyclic resource symlink: %v", err)
+	}
+	if err := os.Symlink(filepath.Join("resource", "child"), filepath.Join(store, "growing-cycle", "resource")); err != nil {
+		t.Fatalf("create growing cyclic resource symlink: %v", err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(store, "special-entry", "resource.fifo"), 0o600); err != nil {
+		t.Fatalf("create special resource entry: %v", err)
+	}
+
+	got := runApplicationWithEnvironment(t, []string{"XDG_CONFIG_HOME=" + configDirectory}, "skills", "list", "--store")
+
+	if got.exitCode != 1 {
+		t.Errorf("exit code = %d, want 1", got.exitCode)
+	}
+	if got.stdout != "resource-valid\n" {
+		t.Errorf("stdout = %q, want valid resource Skill", got.stdout)
+	}
+	for _, malformedPath := range []string{"absolute-link:", "broken-link:", "cyclic-link:", "escaping-link:", "growing-cycle:", "special-entry:"} {
+		if !strings.Contains(got.stderr, malformedPath) {
+			t.Errorf("stderr = %q, want diagnostic for %q", got.stderr, malformedPath)
+		}
+	}
+}
+
+func TestStoreListingReportsMalformedCandidatesAlongsideValidResults(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+	writeSkill(t, filepath.Join(store, "valid"), "valid", "Valid Skill")
+	if err := os.WriteFile(filepath.Join(store, "unexpected.txt"), []byte("not a Skill"), 0o644); err != nil {
+		t.Fatalf("write unexpected Store entry: %v", err)
+	}
+	if err := os.Symlink("valid", filepath.Join(store, "linked-skill")); err != nil {
+		t.Fatalf("create symlinked Stored Skill: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(store, "team"), 0o755); err != nil {
+		t.Fatalf("create Organization: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(store, "team", "notes.txt"), []byte("unexpected"), 0o644); err != nil {
+		t.Fatalf("write unexpected Organization entry: %v", err)
+	}
+	if err := os.Symlink("../valid", filepath.Join(store, "team", "linked")); err != nil {
+		t.Fatalf("create symlinked Organization entry: %v", err)
+	}
+	writeSkill(t, filepath.Join(store, "team", "nested", "too-deep"), "too-deep", "Excessively nested Skill")
+
+	got := runApplicationWithEnvironment(
+		t,
+		[]string{"XDG_CONFIG_HOME=" + configDirectory},
+		"skills", "list", "--store",
+	)
+
+	if got.exitCode != 1 {
+		t.Errorf("exit code = %d, want 1", got.exitCode)
+	}
+	if got.stdout != "valid\n" {
+		t.Errorf("stdout = %q, want the valid Stored Skill", got.stdout)
+	}
+	for _, malformedPath := range []string{"linked-skill:", "team/linked:", "team/nested:", "team/notes.txt:", "unexpected.txt:"} {
+		if !strings.Contains(got.stderr, malformedPath) {
+			t.Errorf("stderr = %q, want diagnostic for %q", got.stderr, malformedPath)
+		}
+	}
+	if strings.Contains(got.stderr, "Usage:") || strings.Contains(got.stderr, "Error:") {
+		t.Errorf("stderr = %q, want concise plain-text diagnostics", got.stderr)
 	}
 }
 
