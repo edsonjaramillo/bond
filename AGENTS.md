@@ -14,4 +14,5 @@ This is a single-context repository. See `docs/agents/domain.md`.
 
 ## Code Quality
 
-Format and then lint, use "task format\lint"
+- Format with `task format`, then lint with `task lint`.
+- Follow Staticcheck `ST1005`: error strings, including those passed to `fmt.Errorf`, must start with a lowercase letter and must not end with punctuation or a newline.
