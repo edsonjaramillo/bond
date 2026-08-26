@@ -82,9 +82,12 @@ type addTransactionJournal struct {
 }
 
 type stagedInstallation struct {
-	Name        string `json:"name"`
-	Source      string `json:"source"`
-	Destination string `json:"destination"`
+	Name        string             `json:"name"`
+	Source      string             `json:"source"`
+	Mode        installationMode   `json:"mode,omitempty"`
+	Identity    filesystemIdentity `json:"identity,omitempty"`
+	Fingerprint skillFingerprint   `json:"fingerprint,omitempty"`
+	Destination string             `json:"destination"`
 }
 
 func journalPath(agentsDirectory string) string {
@@ -152,8 +155,21 @@ func readAddJournal(agentsDirectory string) (addTransactionJournal, bool, error)
 	if err := validateManifestRecords(journal.NextManifest.Skills); err != nil {
 		return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt: invalid next manifest: %w", err)
 	}
-	for _, installation := range journal.Installations {
+	for index := range journal.Installations {
+		installation := &journal.Installations[index]
+		if installation.Mode == "" {
+			installation.Mode = linkMode
+		}
 		if !validProjectSkillBasename(installation.Name) || !filepath.IsAbs(installation.Source) || installation.Destination != filepath.ToSlash(filepath.Join("skills", installation.Name)) {
+			return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
+		}
+		if installation.Mode != linkMode && installation.Mode != copyMode {
+			return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
+		}
+		if installation.Mode == linkMode && installation.Fingerprint != "" {
+			return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
+		}
+		if installation.Mode == copyMode && (!installation.Identity.recorded() || !installation.Fingerprint.valid()) {
 			return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
 		}
 	}
@@ -220,7 +236,7 @@ func rollbackAddTransaction(agentsDirectory string, journal addTransactionJourna
 			return manualRecoveryError(agentsDirectory, fmt.Sprintf("destination %q was created after interruption", installation.Destination))
 		}
 		if stageErr == nil {
-			if err := os.Remove(staged); err != nil {
+			if err := removeInstalledPath(staged, installation.Mode); err != nil {
 				return fmt.Errorf("remove staged Project Skill %q: %w", installation.Name, err)
 			}
 		} else if !os.IsNotExist(stageErr) {
@@ -230,11 +246,10 @@ func rollbackAddTransaction(agentsDirectory string, journal addTransactionJourna
 			if destinationErr != nil {
 				return manualRecoveryError(agentsDirectory, fmt.Sprintf("destination %q cannot be inspected", installation.Destination))
 			}
-			target, err := os.Readlink(destination)
-			if err != nil || target != installation.Source {
+			if !installationMatches(destination, installation) {
 				return manualRecoveryError(agentsDirectory, fmt.Sprintf("destination %q conflicts with interrupted installation", installation.Destination))
 			}
-			if err := os.Remove(destination); err != nil {
+			if err := removeInstalledPath(destination, installation.Mode); err != nil {
 				return fmt.Errorf("roll back Project Skill %q: %w", installation.Name, err)
 			}
 			if err := syncDirectory(filepath.Dir(destination)); err != nil {
@@ -299,8 +314,7 @@ func validateRollbackPaths(agentsDirectory string, journal addTransactionJournal
 		if !exists {
 			return manualRecoveryError(agentsDirectory, fmt.Sprintf("staging path %q was created after interruption", entry.Name()))
 		}
-		target, readErr := os.Readlink(filepath.Join(stageDirectory, entry.Name()))
-		if readErr != nil || target != installation.Source {
+		if !installationMatches(filepath.Join(stageDirectory, entry.Name()), installation) {
 			return manualRecoveryError(agentsDirectory, fmt.Sprintf("staged Project Skill %q conflicts with the transaction", entry.Name()))
 		}
 	}
@@ -383,13 +397,29 @@ func restorePreviousManifest(agentsDirectory string, journal addTransactionJourn
 func verifyPublishedInstallations(agentsDirectory string, journal addTransactionJournal) error {
 	for _, installation := range journal.Installations {
 		destination := filepath.Join(agentsDirectory, filepath.FromSlash(installation.Destination))
-		target, err := os.Readlink(destination)
-		if err != nil || target != installation.Source {
+		if !installationMatches(destination, installation) {
 			return manualRecoveryError(agentsDirectory, fmt.Sprintf("committed destination %q conflicts with the transaction", installation.Destination))
 		}
 	}
 
 	return nil
+}
+
+func installationMatches(path string, installation stagedInstallation) bool {
+	if installation.Identity.recorded() {
+		identity, err := identifyPath(path)
+		if err != nil || identity != installation.Identity {
+			return false
+		}
+	}
+	if installation.Mode == copyMode {
+		fingerprint, err := skillTreeFingerprint(path)
+
+		return err == nil && fingerprint == installation.Fingerprint
+	}
+	target, err := os.Readlink(path)
+
+	return err == nil && target == installation.Source
 }
 
 func cleanupCommittedAdd(agentsDirectory string, journal addTransactionJournal) error {

@@ -121,14 +121,24 @@ func newSkillDraftCommand(invocation Invocation) *cobra.Command {
 }
 
 func newAddCommand(invocation Invocation) *cobra.Command {
-	return &cobra.Command{
+	var copySkills bool
+
+	command := &cobra.Command{
 		Use:   "add <stored-path>...",
 		Short: "Install Stored Skills",
 		Args:  cobra.MinimumNArgs(1),
 		RunE: func(command *cobra.Command, arguments []string) error {
-			return addLinkedSkills(command, invocation, arguments)
+			mode := linkMode
+			if copySkills {
+				mode = copyMode
+			}
+
+			return addSkills(command, invocation, arguments, mode)
 		},
 	}
+	command.Flags().BoolVar(&copySkills, "copy", false, "install independent copies")
+
+	return command
 }
 
 func newEditCommand(invocation Invocation) *cobra.Command {

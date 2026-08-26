@@ -26,7 +26,7 @@ type requestedInstallation struct {
 	errors   []string
 }
 
-func addLinkedSkills(command *cobra.Command, invocation Invocation, storedSkillPaths []string) (resultError error) {
+func addSkills(command *cobra.Command, invocation Invocation, storedSkillPaths []string, mode installationMode) (resultError error) {
 	lock, err := acquireProjectLock(command.Context(), invocation.WorkingDirectory, invocation.projectLockTimeout)
 	if err != nil {
 		return err
@@ -46,7 +46,7 @@ func addLinkedSkills(command *cobra.Command, invocation Invocation, storedSkillP
 		}
 	}
 
-	requests, manifest, manifestExists, agentsExists, skillsExists, err := preflightLinkedSkills(invocation, storedSkillPaths)
+	requests, manifest, manifestExists, agentsExists, skillsExists, err := preflightSkills(invocation, storedSkillPaths)
 	if err != nil {
 		return err
 	}
@@ -73,21 +73,55 @@ func addLinkedSkills(command *cobra.Command, invocation Invocation, storedSkillP
 	installations := make([]stagedInstallation, 0, len(requests))
 	for _, request := range requests {
 		staged := filepath.Join(stageDirectory, request.path.Name)
-		if err := os.Symlink(request.source, staged); err != nil {
-			cause := fmt.Errorf("create linked Project Skill %q: %w; retry with --copy", request.path.Name, err)
+		var stageError error
+		if mode == copyMode {
+			stageError = copySkill(request.source, staged)
+		} else {
+			stageError = os.Symlink(request.source, staged)
+		}
+		if stageError != nil {
+			description := "copied"
+			if mode == linkMode {
+				description = "linked"
+				stageError = fmt.Errorf("%w; retry with --copy", stageError)
+			}
+			cause := fmt.Errorf("create %s Project Skill %q: %w", description, request.path.Name, stageError)
+
 			return errors.Join(cause, cleanupStagedAdd(stageDirectory, filepath.Join(agentsDirectory, "skills"), agentsDirectory, createdSkills, createdAgents))
+		}
+		identity, err := identifyPath(staged)
+		if err != nil {
+			cause := fmt.Errorf("identify staged Project Skill %q: %w", request.path.Name, err)
+
+			return errors.Join(cause, cleanupStagedAdd(stageDirectory, filepath.Join(agentsDirectory, "skills"), agentsDirectory, createdSkills, createdAgents))
+		}
+		installation := stagedInstallation{
+			Name:        request.path.Name,
+			Source:      request.source,
+			Mode:        mode,
+			Identity:    identity,
+			Destination: filepath.ToSlash(filepath.Join("skills", request.path.Name)),
+		}
+		if mode == copyMode {
+			validationErrors := skill.Validate(staged)
+			if len(validationErrors) > 0 {
+				cause := fmt.Errorf("validate copied Project Skill %q: %w", request.path.Name, errors.Join(validationErrors...))
+
+				return errors.Join(cause, cleanupStagedAdd(stageDirectory, filepath.Join(agentsDirectory, "skills"), agentsDirectory, createdSkills, createdAgents))
+			}
+			fingerprint, err := skillTreeFingerprint(staged)
+			if err != nil {
+				return errors.Join(err, cleanupStagedAdd(stageDirectory, filepath.Join(agentsDirectory, "skills"), agentsDirectory, createdSkills, createdAgents))
+			}
+			installation.Fingerprint = fingerprint
 		}
 		nextManifest.Skills = append(nextManifest.Skills, managedSkillRecord{
 			Name:        request.path.Name,
 			Source:      request.argument,
-			Mode:        linkMode,
+			Mode:        mode,
 			Destination: filepath.ToSlash(filepath.Join(".agents", "skills", request.path.Name)),
 		})
-		installations = append(installations, stagedInstallation{
-			Name:        request.path.Name,
-			Source:      request.source,
-			Destination: filepath.ToSlash(filepath.Join("skills", request.path.Name)),
-		})
+		installations = append(installations, installation)
 	}
 
 	if err := syncDirectory(stageDirectory); err != nil {
@@ -121,7 +155,7 @@ func addLinkedSkills(command *cobra.Command, invocation Invocation, storedSkillP
 		staged := filepath.Join(stageDirectory, installation.Name)
 		destination := filepath.Join(agentsDirectory, filepath.FromSlash(installation.Destination))
 		if err := os.Rename(staged, destination); err != nil {
-			cause := fmt.Errorf("publish linked Project Skill %q: %w", installation.Name, err)
+			cause := fmt.Errorf("publish Project Skill %q: %w", installation.Name, err)
 
 			return errors.Join(cause, rollbackAddTransaction(agentsDirectory, journal, false))
 		}
@@ -135,7 +169,7 @@ func addLinkedSkills(command *cobra.Command, invocation Invocation, storedSkillP
 			return fmt.Errorf("interrupted Project transaction after first publication")
 		}
 		if index == 0 && invocation.transactionFailurePoint == afterFirstPublish {
-			return errors.Join(fmt.Errorf("publish linked Project Skill batch: injected failure"), rollbackAddTransaction(agentsDirectory, journal, false))
+			return errors.Join(fmt.Errorf("publish Project Skill batch: injected failure"), rollbackAddTransaction(agentsDirectory, journal, false))
 		}
 	}
 	if invocation.transactionInterruptionPoint == afterAllPublishes {
@@ -175,7 +209,7 @@ func cleanupStagedAdd(stageDirectory, skillsDirectory, agentsDirectory string, c
 	return errors.Join(cleanupError, rollbackAddedSkill("", skillsDirectory, agentsDirectory, false, createdSkills, createdAgents))
 }
 
-func preflightLinkedSkills(invocation Invocation, arguments []string) ([]requestedInstallation, projectManifest, bool, bool, bool, error) {
+func preflightSkills(invocation Invocation, arguments []string) ([]requestedInstallation, projectManifest, bool, bool, bool, error) {
 	requests := make([]requestedInstallation, len(arguments))
 	seenArguments := make(map[string]bool)
 	seenNames := make(map[string]string)

@@ -891,6 +891,95 @@ func TestAddInstallsOneStoredSkillAsAnAbsoluteManagedLink(t *testing.T) {
 	}
 }
 
+func TestAddCopiesStoredSkillAsIndependentManagedSnapshot(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	source := filepath.Join(configDirectory, "bond", "skills", "review")
+	writeSkill(t, source, "review", "Review changes")
+	resourceDirectory := filepath.Join(source, "resources")
+	if err := os.Mkdir(resourceDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	script := filepath.Join(resourceDirectory, "check.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho stored\n"), 0o751); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("resources", "check.sh"), filepath.Join(source, "check")); err != nil {
+		t.Fatal(err)
+	}
+	project := t.TempDir()
+
+	got := runApplicationInDirectory(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "skills", "add", "review", "--copy")
+
+	if got.exitCode != 0 || got.stdout != "" || got.stderr != "" {
+		t.Fatalf("exit code = %d, stdout = %q, stderr = %q; want silent success", got.exitCode, got.stdout, got.stderr)
+	}
+	destination := filepath.Join(project, ".agents", "skills", "review")
+	if info, err := os.Lstat(destination); err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+		t.Fatalf("copied Project Skill info = %v, err = %v; want real directory", info, err)
+	}
+	contents, err := os.ReadFile(filepath.Join(destination, "resources", "check.sh"))
+	if err != nil || string(contents) != "#!/bin/sh\necho stored\n" {
+		t.Errorf("copied script = %q, err = %v", contents, err)
+	}
+	info, err := os.Stat(filepath.Join(destination, "resources", "check.sh"))
+	if err != nil || info.Mode().Perm()&0o111 != 0o111 {
+		t.Errorf("copied script mode = %v, err = %v; want executable bits preserved", info, err)
+	}
+	target, err := os.Readlink(filepath.Join(destination, "check"))
+	if err != nil || target != filepath.Join("resources", "check.sh") {
+		t.Errorf("copied resource symlink target = %q, err = %v", target, err)
+	}
+
+	if err := os.WriteFile(script, []byte("store changed\n"), 0o751); err != nil {
+		t.Fatal(err)
+	}
+	if copied, err := os.ReadFile(filepath.Join(destination, "resources", "check.sh")); err != nil || string(copied) != "#!/bin/sh\necho stored\n" {
+		t.Errorf("Store change affected copied Project Skill: contents = %q, err = %v", copied, err)
+	}
+	if err := os.WriteFile(filepath.Join(destination, "resources", "check.sh"), []byte("project changed\n"), 0o751); err != nil {
+		t.Fatal(err)
+	}
+	if stored, err := os.ReadFile(script); err != nil || string(stored) != "store changed\n" {
+		t.Errorf("Project change affected Stored Skill: contents = %q, err = %v", stored, err)
+	}
+
+	readOnlyDirectory := filepath.Join(source, "read-only")
+	if err := os.Mkdir(readOnlyDirectory, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(readOnlyDirectory, "notes.txt"), []byte("preserved\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(readOnlyDirectory, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(readOnlyDirectory, 0o755) })
+
+	secondProject := t.TempDir()
+	second := runApplicationInDirectory(t, secondProject, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "skills", "add", "review", "--copy")
+	if second.exitCode != 0 {
+		t.Fatalf("copy Skill with read-only directory: stderr = %q", second.stderr)
+	}
+	copiedReadOnly := filepath.Join(secondProject, ".agents", "skills", "review", "read-only")
+	t.Cleanup(func() { _ = os.Chmod(copiedReadOnly, 0o755) })
+	if contents, err := os.ReadFile(filepath.Join(copiedReadOnly, "notes.txt")); err != nil || string(contents) != "preserved\n" {
+		t.Errorf("copied read-only resource = %q, err = %v", contents, err)
+	}
+	if info, err := os.Stat(copiedReadOnly); err != nil || info.Mode().Perm() != 0o555 {
+		t.Errorf("copied directory mode = %v, err = %v; want 0555", info, err)
+	}
+
+	manifest, err := os.ReadFile(filepath.Join(project, ".agents", "bond-manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(manifest), `"mode": "copy"`) {
+		t.Errorf("manifest = %s, want copy mode", manifest)
+	}
+}
+
 func TestAddValidatesOnlyTheSelectedStoredSkill(t *testing.T) {
 	t.Parallel()
 
@@ -994,6 +1083,58 @@ func TestAddInstallsMultipleStoredSkillsWithOneManifestTransition(t *testing.T) 
 	}
 }
 
+func TestAddCopyAppliesToEverySkillInBatch(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+	writeSkill(t, filepath.Join(store, "review"), "review", "Review changes")
+	writeSkill(t, filepath.Join(store, "deploy"), "deploy", "Deploy changes")
+	project := t.TempDir()
+
+	got := runApplicationInDirectory(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "skills", "add", "review", "deploy", "--copy")
+
+	if got.exitCode != 0 || got.stdout != "" || got.stderr != "" {
+		t.Fatalf("exit code = %d, stdout = %q, stderr = %q; want silent success", got.exitCode, got.stdout, got.stderr)
+	}
+	for _, name := range []string{"review", "deploy"} {
+		info, err := os.Lstat(filepath.Join(project, ".agents", "skills", name))
+		if err != nil || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
+			t.Errorf("Project Skill %q info = %v, err = %v; want copied directory", name, info, err)
+		}
+	}
+	manifest, err := os.ReadFile(filepath.Join(project, ".agents", "bond-manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(string(manifest), `"mode": "copy"`) != 2 || strings.Contains(string(manifest), `"mode": "link"`) {
+		t.Errorf("manifest = %s, want every installation in copy mode", manifest)
+	}
+}
+
+func TestAddCopyRejectsUnsafeSourceWithoutChangingBatch(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+	writeSkill(t, filepath.Join(store, "review"), "review", "Review changes")
+	unsafeSource := filepath.Join(store, "deploy")
+	writeSkill(t, unsafeSource, "deploy", "Deploy changes")
+	if err := os.Symlink(filepath.Join("..", "review", "SKILL.md"), filepath.Join(unsafeSource, "outside")); err != nil {
+		t.Fatal(err)
+	}
+	project := t.TempDir()
+
+	got := runApplicationInDirectory(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "skills", "add", "review", "deploy", "--copy")
+
+	if got.exitCode != 1 || got.stdout != "" || !strings.Contains(got.stderr, "escapes") {
+		t.Fatalf("exit code = %d, stdout = %q, stderr = %q; want unsafe source failure", got.exitCode, got.stdout, got.stderr)
+	}
+	if _, err := os.Lstat(filepath.Join(project, ".agents")); !os.IsNotExist(err) {
+		t.Errorf("copy batch changed Project state: %v", err)
+	}
+}
+
 func TestAddReportsAllBatchErrorsInArgumentOrderWithoutChangingProject(t *testing.T) {
 	t.Parallel()
 
@@ -1038,6 +1179,25 @@ func TestAddHandledPublicationFailureRestoresPriorProjectState(t *testing.T) {
 	project := t.TempDir()
 
 	got := runApplicationWithDependencies(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", Dependencies{TransactionFailurePoint: afterFirstPublish}, "skills", "add", "review", "deploy")
+
+	if got.exitCode != 1 || got.stdout != "" || got.stderr == "" {
+		t.Fatalf("exit code = %d, stdout = %q, stderr = %q; want handled failure", got.exitCode, got.stdout, got.stderr)
+	}
+	if _, err := os.Lstat(filepath.Join(project, ".agents")); !os.IsNotExist(err) {
+		t.Errorf("Project state was not restored: %v", err)
+	}
+}
+
+func TestAddCopyHandledPublicationFailureRestoresPriorProjectState(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+	writeSkill(t, filepath.Join(store, "review"), "review", "Review changes")
+	writeSkill(t, filepath.Join(store, "deploy"), "deploy", "Deploy changes")
+	project := t.TempDir()
+
+	got := runApplicationWithDependencies(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", Dependencies{TransactionFailurePoint: afterFirstPublish}, "skills", "add", "review", "deploy", "--copy")
 
 	if got.exitCode != 1 || got.stdout != "" || got.stderr == "" {
 		t.Fatalf("exit code = %d, stdout = %q, stderr = %q; want handled failure", got.exitCode, got.stdout, got.stderr)
@@ -1133,6 +1293,95 @@ func TestAddRecoversInterruptionsAtEveryJournaledPhaseBeforeNextMutation(t *test
 				t.Errorf("transaction journal remains after recovery: %v", err)
 			}
 		})
+	}
+}
+
+func TestAddCopyRecoversInterruptionsAtEveryJournaledPhaseBeforeNextMutation(t *testing.T) {
+	for _, test := range []struct {
+		name                 string
+		interruptionPoint    string
+		interruptedCommitted bool
+	}{
+		{name: "journal written", interruptionPoint: afterJournalWrite},
+		{name: "first publication", interruptionPoint: afterFirstPublish},
+		{name: "all publications", interruptionPoint: afterAllPublishes},
+		{name: "manifest written", interruptionPoint: afterManifestWrite, interruptedCommitted: true},
+		{name: "staging removed", interruptionPoint: afterStageRemoval, interruptedCommitted: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			configDirectory := t.TempDir()
+			store := filepath.Join(configDirectory, "bond", "skills")
+			for _, name := range []string{"base", "review", "deploy", "lint"} {
+				writeSkill(t, filepath.Join(store, name), name, name+" changes")
+			}
+			project := t.TempDir()
+			environment := []string{"XDG_CONFIG_HOME=" + configDirectory}
+			initial := runApplicationInDirectory(t, project, environment, "", "skills", "add", "base", "--copy")
+			if initial.exitCode != 0 {
+				t.Fatalf("initial exit code = %d, stderr = %q", initial.exitCode, initial.stderr)
+			}
+
+			interrupted := runApplicationWithDependencies(t, project, environment, "", Dependencies{TransactionInterruptionPoint: test.interruptionPoint}, "skills", "add", "review", "deploy", "--copy")
+			if interrupted.exitCode != 1 || interrupted.stdout != "" || interrupted.stderr == "" {
+				t.Fatalf("interrupted exit code = %d, stdout = %q, stderr = %q", interrupted.exitCode, interrupted.stdout, interrupted.stderr)
+			}
+
+			recovered := runApplicationInDirectory(t, project, environment, "", "skills", "add", "lint", "--copy")
+			if recovered.exitCode != 0 || recovered.stdout != "" || recovered.stderr != "" {
+				t.Fatalf("recovered exit code = %d, stdout = %q, stderr = %q", recovered.exitCode, recovered.stdout, recovered.stderr)
+			}
+			for _, name := range []string{"review", "deploy"} {
+				info, err := os.Lstat(filepath.Join(project, ".agents", "skills", name))
+				if test.interruptedCommitted && (err != nil || !info.IsDir()) {
+					t.Errorf("committed copied Project Skill %q is absent after recovery: info = %v, err = %v", name, info, err)
+				}
+				if !test.interruptedCommitted && !os.IsNotExist(err) {
+					t.Errorf("uncommitted copied Project Skill %q remains after recovery: %v", name, err)
+				}
+			}
+			for _, name := range []string{"base", "lint"} {
+				if info, err := os.Lstat(filepath.Join(project, ".agents", "skills", name)); err != nil || !info.IsDir() {
+					t.Errorf("copied Project Skill %q is absent: info = %v, err = %v", name, info, err)
+				}
+			}
+			if _, err := os.Lstat(filepath.Join(project, ".agents", "bond-journal.json")); !os.IsNotExist(err) {
+				t.Errorf("transaction journal remains after recovery: %v", err)
+			}
+		})
+	}
+}
+
+func TestAddCopyRecoveryPreservesIdenticalPathRecreatedAfterInterruption(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+	writeSkill(t, filepath.Join(store, "review"), "review", "Review changes")
+	writeSkill(t, filepath.Join(store, "lint"), "lint", "Lint changes")
+	project := t.TempDir()
+	environment := []string{"XDG_CONFIG_HOME=" + configDirectory}
+
+	interrupted := runApplicationWithDependencies(t, project, environment, "", Dependencies{TransactionInterruptionPoint: afterFirstPublish}, "skills", "add", "review", "--copy")
+	if interrupted.exitCode != 1 {
+		t.Fatalf("interrupted exit code = %d, stderr = %q", interrupted.exitCode, interrupted.stderr)
+	}
+	destination := filepath.Join(project, ".agents", "skills", "review")
+	if err := os.RemoveAll(destination); err != nil {
+		t.Fatal(err)
+	}
+	writeSkill(t, destination, "review", "Review changes")
+
+	recovery := runApplicationInDirectory(t, project, environment, "", "skills", "add", "lint", "--copy")
+	if recovery.exitCode != 1 || !strings.Contains(recovery.stderr, "manual recovery") || !strings.Contains(recovery.stderr, "conflicts") {
+		t.Fatalf("recovery exit code = %d, stderr = %q; want manual recovery", recovery.exitCode, recovery.stderr)
+	}
+	if contents, err := os.ReadFile(filepath.Join(destination, "SKILL.md")); err != nil || !strings.Contains(string(contents), "Review changes") {
+		t.Errorf("recreated identical Project Skill changed: contents = %q, err = %v", contents, err)
+	}
+	if _, err := os.Lstat(filepath.Join(project, ".agents", "skills", "lint")); !os.IsNotExist(err) {
+		t.Errorf("next mutation proceeded despite unresolved recovery: %v", err)
 	}
 }
 
