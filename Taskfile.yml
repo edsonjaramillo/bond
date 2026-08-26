@@ -2,7 +2,7 @@
 # https://taskfile.dev
 version: "3"
 vars:
-  MAIN: cmd/main.go
+  MAIN: .
   BIN_DIR: ~/.local/bin
   EXECUTABLE: bond
 tasks:
@@ -12,7 +12,7 @@ tasks:
   build:
     cmds:
       - mkdir -p {{.BIN_DIR}}
-      - go build -ldflags="-s -w -X bond/internal/commands.Version={{.VERSION}}" -o {{.BIN_DIR}}/{{.EXECUTABLE}} {{.MAIN}}
+      - go build -ldflags="-s -w -X github.com/edsonjaramillo/bond/internal/application.Version={{.VERSION}}" -o {{.BIN_DIR}}/{{.EXECUTABLE}} {{.MAIN}}
     silent: true
   test:
     cmd: go test ./...
