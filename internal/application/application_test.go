@@ -399,6 +399,213 @@ func TestStoreListingReportsMalformedCandidatesAlongsideValidResults(t *testing.
 	}
 }
 
+func TestMissingOrEmptyProjectListsAsEmptyWithoutCreatingInfrastructure(t *testing.T) {
+	t.Parallel()
+
+	for _, prepare := range []bool{false, true} {
+		project := t.TempDir()
+		if prepare {
+			if err := os.MkdirAll(filepath.Join(project, ".agents", "skills"), 0o755); err != nil {
+				t.Fatalf("create empty Project collection: %v", err)
+			}
+		}
+
+		got := runApplicationInDirectory(t, project, []string{"HOME=" + t.TempDir()}, "", "skills", "list")
+
+		if got.exitCode != 0 || got.stdout != "No skills found.\n" || got.stderr != "" {
+			t.Errorf("prepared = %v: exit code = %d, stdout = %q, stderr = %q", prepare, got.exitCode, got.stdout, got.stderr)
+		}
+		if !prepare {
+			if _, err := os.Lstat(filepath.Join(project, ".agents")); !os.IsNotExist(err) {
+				t.Errorf("Project infrastructure was created: %v", err)
+			}
+		}
+	}
+}
+
+func TestProjectListingUsesExactWorkingDirectoryAndPrintsManagedAndUnmanagedSkills(t *testing.T) {
+	t.Parallel()
+
+	parent := t.TempDir()
+	writeSkill(t, filepath.Join(parent, ".agents", "skills", "parent-skill"), "parent-skill", "Parent Skill")
+	project := filepath.Join(parent, "child")
+	writeSkill(t, filepath.Join(project, ".agents", "skills", "zebra"), "zebra", "Unmanaged Skill")
+	writeSkill(t, filepath.Join(project, ".agents", "skills", "alpha"), "alpha", "Managed Skill")
+	if err := os.WriteFile(filepath.Join(project, ".agents", "bond-manifest.json"), []byte(`{"version":1,"skills":[{"name":"alpha"}]}`), 0o644); err != nil {
+		t.Fatalf("write manifest: %v", err)
+	}
+
+	got := runApplicationInDirectory(t, project, []string{"HOME=" + t.TempDir()}, "", "skills", "list")
+
+	if got.exitCode != 0 || got.stdout != "alpha\nzebra\n" || got.stderr != "" {
+		t.Errorf("exit code = %d, stdout = %q, stderr = %q", got.exitCode, got.stdout, got.stderr)
+	}
+}
+
+func TestProjectListingReportsMalformedCandidatesAlongsideValidSymlinkedSkills(t *testing.T) {
+	t.Parallel()
+
+	project := t.TempDir()
+	collection := filepath.Join(project, ".agents", "skills")
+	outside := t.TempDir()
+	writeSkill(t, filepath.Join(outside, "linked"), "linked", "Linked Skill")
+	if err := os.MkdirAll(collection, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "linked"), filepath.Join(collection, "linked")); err != nil {
+		t.Fatalf("link Project Skill: %v", err)
+	}
+	writeSkill(t, filepath.Join(collection, "valid"), "valid", "Valid Skill")
+	writeSkillDocument(t, filepath.Join(collection, "bad-frontmatter"), []byte("not frontmatter\n"))
+	if err := os.WriteFile(filepath.Join(collection, "unexpected.txt"), []byte("unexpected"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("missing", filepath.Join(collection, "broken")); err != nil {
+		t.Fatal(err)
+	}
+
+	got := runApplicationInDirectory(t, project, []string{"HOME=" + t.TempDir()}, "", "skills", "list")
+
+	if got.exitCode != 1 || got.stdout != "linked\nvalid\n" {
+		t.Errorf("exit code = %d, stdout = %q, want partial lexical results", got.exitCode, got.stdout)
+	}
+	wantDiagnostics := []string{"bad-frontmatter:", "broken:", "unexpected.txt:"}
+	last := -1
+	for _, diagnostic := range wantDiagnostics {
+		index := strings.Index(got.stderr, diagnostic)
+		if index <= last {
+			t.Errorf("stderr = %q, want ordered diagnostic %q", got.stderr, diagnostic)
+		}
+		last = index
+	}
+}
+
+func TestProjectListingRejectsSymlinkedInfrastructure(t *testing.T) {
+	t.Parallel()
+
+	for _, infrastructure := range []string{".agents", filepath.Join(".agents", "skills")} {
+		t.Run(infrastructure, func(t *testing.T) {
+			t.Parallel()
+
+			project := t.TempDir()
+			target := t.TempDir()
+			if infrastructure == ".agents" {
+				if err := os.Symlink(target, filepath.Join(project, ".agents")); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				if err := os.Mkdir(filepath.Join(project, ".agents"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, filepath.Join(project, infrastructure)); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			got := runApplicationInDirectory(t, project, []string{"HOME=" + t.TempDir()}, "", "skills", "list")
+
+			if got.exitCode != 1 || got.stdout != "" || !strings.Contains(got.stderr, "must not be a symlink") {
+				t.Errorf("exit code = %d, stdout = %q, stderr = %q", got.exitCode, got.stdout, got.stderr)
+			}
+		})
+	}
+}
+
+func TestEditOpensMalformedUnmanagedProjectSkillAndRetainsValidChanges(t *testing.T) {
+	t.Parallel()
+
+	project := t.TempDir()
+	skillDirectory := filepath.Join(project, ".agents", "skills", "review")
+	writeSkillDocument(t, skillDirectory, []byte("malformed\n"))
+	editorDirectory := t.TempDir()
+	editor := filepath.Join(editorDirectory, "repair editor")
+	script := "#!/bin/sh\nprintf 'editor output\\n'\nprintf '%s\\n' '---' 'name: review' 'description: Repaired Skill' '---' > SKILL.md\n"
+	if err := os.WriteFile(editor, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := runApplicationInDirectory(t, project, []string{"HOME=" + t.TempDir(), "EDITOR='" + editor + "'"}, "", "skills", "edit", "review")
+
+	if got.exitCode != 0 || got.stdout != "editor output\n" || got.stderr != "" {
+		t.Errorf("exit code = %d, stdout = %q, stderr = %q", got.exitCode, got.stdout, got.stderr)
+	}
+}
+
+func TestEditFollowsAProjectSkillSymlinkAndAcceptsItsExactBasename(t *testing.T) {
+	t.Parallel()
+
+	project := t.TempDir()
+	collection := filepath.Join(project, ".agents", "skills")
+	target := filepath.Join(t.TempDir(), "Review")
+	writeSkillDocument(t, target, []byte("malformed\n"))
+	if err := os.MkdirAll(collection, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(collection, "Review")); err != nil {
+		t.Fatal(err)
+	}
+	editor := filepath.Join(t.TempDir(), "editor")
+	if err := os.WriteFile(editor, []byte("#!/bin/sh\nprintf 'changed through link\\n' > SKILL.md\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	got := runApplicationInDirectory(t, project, []string{"HOME=" + t.TempDir(), "EDITOR=" + editor}, "", "skills", "edit", "Review")
+
+	if got.exitCode != 1 || !strings.Contains(got.stderr, "Review:") {
+		t.Errorf("exit code = %d, stderr = %q; want retained post-edit validation failure", got.exitCode, got.stderr)
+	}
+	contents, err := os.ReadFile(filepath.Join(target, "SKILL.md"))
+	if err != nil || string(contents) != "changed through link\n" {
+		t.Errorf("linked SKILL.md contents = %q, err = %v", contents, err)
+	}
+}
+
+func TestEditFailuresRetainUserChanges(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name   string
+		editor string
+		script string
+	}{
+		{name: "unset editor"},
+		{name: "editor exit", script: "#!/bin/sh\nprintf 'changed by failed editor\\n' > SKILL.md\nexit 7\n"},
+		{name: "invalid result", script: "#!/bin/sh\nprintf 'changed but invalid\\n' > SKILL.md\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			project := t.TempDir()
+			skillDirectory := filepath.Join(project, ".agents", "skills", "review")
+			writeSkill(t, skillDirectory, "review", "Original")
+			environment := []string{"HOME=" + t.TempDir()}
+			if test.script != "" {
+				test.editor = filepath.Join(t.TempDir(), "editor")
+				if err := os.WriteFile(test.editor, []byte(test.script), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				environment = append(environment, "EDITOR="+test.editor)
+			}
+
+			got := runApplicationInDirectory(t, project, environment, "", "skills", "edit", "review")
+
+			if got.exitCode != 1 || got.stdout != "" || got.stderr == "" {
+				t.Errorf("exit code = %d, stdout = %q, stderr = %q", got.exitCode, got.stdout, got.stderr)
+			}
+			contents, err := os.ReadFile(filepath.Join(skillDirectory, "SKILL.md"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.script == "" && !strings.Contains(string(contents), "Original") {
+				t.Errorf("unset editor changed content: %q", contents)
+			}
+			if test.script != "" && !strings.Contains(string(contents), "changed") {
+				t.Errorf("editor changes were not retained: %q", contents)
+			}
+		})
+	}
+}
+
 func TestNewCreatesTopLevelAndSkillDraftsUnderAnOrganizationWithoutAnEditor(t *testing.T) {
 	t.Parallel()
 

@@ -93,6 +93,7 @@ func newSkillsCommand(invocation Invocation) *cobra.Command {
 	}
 	command.AddCommand(newListCommand(invocation))
 	command.AddCommand(newSkillDraftCommand(invocation))
+	command.AddCommand(newEditCommand(invocation))
 
 	return command
 }
@@ -108,6 +109,17 @@ func newSkillDraftCommand(invocation Invocation) *cobra.Command {
 	}
 }
 
+func newEditCommand(invocation Invocation) *cobra.Command {
+	return &cobra.Command{
+		Use:   "edit <skill-name>",
+		Short: "Edit a Project Skill",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, arguments []string) error {
+			return editProjectSkill(command, invocation, arguments[0])
+		},
+	}
+}
+
 func newListCommand(invocation Invocation) *cobra.Command {
 	var store bool
 
@@ -116,11 +128,11 @@ func newListCommand(invocation Invocation) *cobra.Command {
 		Short: "List skills",
 		Args:  cobra.NoArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
-			if !store {
-				return printNoSkillsFound(command.OutOrStdout())
+			if store {
+				return listStoredSkills(command, invocation.Environment)
 			}
 
-			return listStoredSkills(command, invocation.Environment)
+			return listProjectSkills(command, invocation)
 		},
 	}
 	command.Flags().BoolVar(&store, "store", false, "list Stored Skills")

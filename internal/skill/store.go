@@ -15,6 +15,82 @@ type StoreDiscovery struct {
 	Diagnostics []string
 }
 
+// ProjectDiscovery is the observable result of inspecting a Project Skill collection.
+type ProjectDiscovery struct {
+	Names       []string
+	Diagnostics []string
+}
+
+// DiscoverProject inspects the immediate entries in a Project Skill collection.
+func DiscoverProject(collection string) (ProjectDiscovery, error) {
+	entries, err := os.ReadDir(collection)
+	if err != nil {
+		return ProjectDiscovery{}, err
+	}
+
+	var discovery ProjectDiscovery
+	for _, entry := range entries {
+		name := entry.Name()
+		if entry.Type()&os.ModeSymlink == 0 && !entry.IsDir() {
+			discovery.Diagnostics = append(discovery.Diagnostics, fmt.Sprintf("%s: unexpected Project entry; expected a Skill directory", name))
+
+			continue
+		}
+
+		errors := ValidateProjectSkill(filepath.Join(collection, name), name)
+		if len(errors) == 0 {
+			discovery.Names = append(discovery.Names, name)
+
+			continue
+		}
+		for _, err := range errors {
+			discovery.Diagnostics = append(discovery.Diagnostics, fmt.Sprintf("%s: %v", name, err))
+		}
+	}
+	sort.Strings(discovery.Names)
+
+	return discovery, nil
+}
+
+// ValidateProjectSkill validates one Project Skill directory or directory symlink.
+func ValidateProjectSkill(path, name string) []error {
+	validationPath, err := ResolveProjectSkillDirectory(path)
+	if err != nil {
+		return []error{err}
+	}
+
+	errors := Validate(validationPath)
+	if filepath.Base(validationPath) != name && len(errors) == 0 {
+		errors = append(errors, fmt.Errorf("skill directory name %q must match Project directory basename %q", filepath.Base(validationPath), name))
+	}
+
+	return errors
+}
+
+// ResolveProjectSkillDirectory resolves a Project Skill entry without validating its contents.
+func ResolveProjectSkillDirectory(path string) (string, error) {
+	validationPath := path
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", fmt.Errorf("inspect Project Skill: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		validationPath, err = filepath.EvalSymlinks(path)
+		if err != nil {
+			return "", fmt.Errorf("resolve Project Skill symlink: %w", err)
+		}
+		info, err = os.Stat(validationPath)
+		if err != nil {
+			return "", fmt.Errorf("inspect Project Skill target: %w", err)
+		}
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("entry for Project Skill must be a directory")
+	}
+
+	return validationPath, nil
+}
+
 // DiscoverStore inspects top-level Stored Skills and Skills one Organization deep.
 func DiscoverStore(store string) (StoreDiscovery, error) {
 	entries, err := os.ReadDir(store)
