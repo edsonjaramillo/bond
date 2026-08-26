@@ -1,6 +1,7 @@
 package application
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -70,35 +71,21 @@ func addLinkedSkill(_ *cobra.Command, invocation Invocation, storedSkillPath str
 	if err != nil {
 		return err
 	}
-	rollbackInfrastructure := func() {
-		if createdSkills {
-			_ = os.Remove(skillsDirectory)
-		}
-		if createdAgents {
-			_ = os.Remove(agentsDirectory)
-		}
-	}
 
 	if err := os.Symlink(source, destination); err != nil {
-		rollbackInfrastructure()
+		cause := fmt.Errorf("create linked Project Skill %q: %w; retry with --copy", storedPath.Name, err)
 
-		return fmt.Errorf("create linked Project Skill %q: %w; retry with --copy", storedPath.Name, err)
+		return errors.Join(cause, rollbackAddedSkill("", skillsDirectory, agentsDirectory, false, createdSkills, createdAgents))
 	}
 
 	manifest.Skills = append(manifest.Skills, managedSkillRecord{
 		Name:        storedPath.Name,
 		Source:      storedSkillPath,
-		Mode:        "link",
+		Mode:        linkMode,
 		Destination: filepath.ToSlash(filepath.Join(".agents", "skills", storedPath.Name)),
 	})
 	if err := writeProjectManifest(agentsDirectory, manifest); err != nil {
-		rollbackError := os.Remove(destination)
-		rollbackInfrastructure()
-		if rollbackError != nil {
-			return fmt.Errorf("%w; also failed to roll back Project Skill %q: %v", err, storedPath.Name, rollbackError)
-		}
-
-		return err
+		return errors.Join(err, rollbackAddedSkill(destination, skillsDirectory, agentsDirectory, true, createdSkills, createdAgents))
 	}
 
 	return nil
@@ -165,12 +152,36 @@ func createProjectSkillInfrastructure(agentsDirectory, skillsDirectory string, a
 		return createdAgents, false, nil
 	}
 	if err := os.Mkdir(skillsDirectory, 0o755); err != nil {
+		cause := fmt.Errorf("create Project infrastructure .agents/skills: %w", err)
 		if createdAgents {
-			_ = os.Remove(agentsDirectory)
+			if rollbackError := os.Remove(agentsDirectory); rollbackError != nil {
+				cause = errors.Join(cause, fmt.Errorf("remove newly created Project infrastructure .agents: %w", rollbackError))
+			}
 		}
 
-		return false, false, fmt.Errorf("create Project infrastructure .agents/skills: %w", err)
+		return false, false, cause
 	}
 
 	return createdAgents, true, nil
+}
+
+func rollbackAddedSkill(destination, skillsDirectory, agentsDirectory string, destinationCreated, skillsCreated, agentsCreated bool) error {
+	var rollbackErrors []error
+	if destinationCreated {
+		if err := os.Remove(destination); err != nil {
+			rollbackErrors = append(rollbackErrors, fmt.Errorf("remove newly created Project Skill: %w", err))
+		}
+	}
+	if skillsCreated {
+		if err := os.Remove(skillsDirectory); err != nil {
+			rollbackErrors = append(rollbackErrors, fmt.Errorf("remove newly created Project infrastructure .agents/skills: %w", err))
+		}
+	}
+	if agentsCreated {
+		if err := os.Remove(agentsDirectory); err != nil {
+			rollbackErrors = append(rollbackErrors, fmt.Errorf("remove newly created Project infrastructure .agents: %w", err))
+		}
+	}
+
+	return errors.Join(rollbackErrors...)
 }

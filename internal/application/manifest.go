@@ -18,11 +18,18 @@ type projectManifest struct {
 	Skills  []managedSkillRecord `json:"skills"`
 }
 
+type installationMode string
+
+const (
+	linkMode installationMode = "link"
+	copyMode installationMode = "copy"
+)
+
 type managedSkillRecord struct {
-	Name        string `json:"name"`
-	Source      string `json:"source"`
-	Mode        string `json:"mode"`
-	Destination string `json:"destination"`
+	Name        string           `json:"name"`
+	Source      string           `json:"source"`
+	Mode        installationMode `json:"mode"`
+	Destination string           `json:"destination"`
 }
 
 func emptyProjectManifest() projectManifest {
@@ -95,7 +102,7 @@ func validateManifestRecords(records []managedSkillRecord) error {
 		if record.Name != storedPath.Name {
 			return fmt.Errorf("skill record %d name %q does not match source Skill Name %q", index, record.Name, storedPath.Name)
 		}
-		if record.Mode != "link" && record.Mode != "copy" {
+		if record.Mode != linkMode && record.Mode != copyMode {
 			return fmt.Errorf("skill record %d has unsupported mode %q", index, record.Mode)
 		}
 		wantDestination := filepath.ToSlash(filepath.Join(".agents", "skills", record.Name))
@@ -127,30 +134,31 @@ func writeProjectManifest(agentsDirectory string, manifest projectManifest) erro
 		return fmt.Errorf("create temporary Project manifest: %w", err)
 	}
 	temporaryPath := temporary.Name()
-	removeTemporary := true
-	defer func() {
-		if removeTemporary {
-			_ = os.Remove(temporaryPath)
-		}
-	}()
 
 	if err := temporary.Chmod(0o644); err != nil {
 		_ = temporary.Close()
 
-		return fmt.Errorf("set Project manifest permissions: %w", err)
+		return removeTemporaryManifest(temporaryPath, fmt.Errorf("set Project manifest permissions: %w", err))
 	}
 	if _, err := temporary.Write(contents); err != nil {
 		_ = temporary.Close()
 
-		return fmt.Errorf("write Project manifest: %w", err)
+		return removeTemporaryManifest(temporaryPath, fmt.Errorf("write Project manifest: %w", err))
 	}
 	if err := temporary.Close(); err != nil {
-		return fmt.Errorf("close Project manifest: %w", err)
+		return removeTemporaryManifest(temporaryPath, fmt.Errorf("close Project manifest: %w", err))
 	}
 	if err := os.Rename(temporaryPath, filepath.Join(agentsDirectory, "bond-manifest.json")); err != nil {
-		return fmt.Errorf("replace Project manifest: %w", err)
+		return removeTemporaryManifest(temporaryPath, fmt.Errorf("replace Project manifest: %w", err))
 	}
-	removeTemporary = false
 
 	return nil
+}
+
+func removeTemporaryManifest(path string, cause error) error {
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("%w; also failed to remove temporary Project manifest: %v", cause, err)
+	}
+
+	return cause
 }
