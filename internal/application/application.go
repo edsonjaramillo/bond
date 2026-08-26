@@ -92,8 +92,20 @@ func newSkillsCommand(invocation Invocation) *cobra.Command {
 		RunE:  showHelp,
 	}
 	command.AddCommand(newListCommand(invocation))
+	command.AddCommand(newSkillDraftCommand(invocation))
 
 	return command
+}
+
+func newSkillDraftCommand(invocation Invocation) *cobra.Command {
+	return &cobra.Command{
+		Use:   "new <stored-path>",
+		Short: "Create a Skill Draft",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, arguments []string) error {
+			return newSkillDraft(command, invocation, arguments[0])
+		},
+	}
 }
 
 func newListCommand(invocation Invocation) *cobra.Command {

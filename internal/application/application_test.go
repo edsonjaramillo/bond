@@ -26,14 +26,20 @@ func runApplication(t *testing.T, arguments ...string) result {
 func runApplicationWithEnvironment(t *testing.T, environment []string, arguments ...string) result {
 	t.Helper()
 
+	return runApplicationInDirectory(t, "/project", environment, "", arguments...)
+}
+
+func runApplicationInDirectory(t *testing.T, directory string, environment []string, stdin string, arguments ...string) result {
+	t.Helper()
+
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
 	exitCode := Run(context.Background(), Invocation{
 		Arguments:        arguments,
 		Environment:      environment,
-		WorkingDirectory: "/project",
-		Stdin:            strings.NewReader(""),
+		WorkingDirectory: directory,
+		Stdin:            strings.NewReader(stdin),
 		Stdout:           &stdout,
 		Stderr:           &stderr,
 	}, Dependencies{})
@@ -390,6 +396,251 @@ func TestStoreListingReportsMalformedCandidatesAlongsideValidResults(t *testing.
 	}
 	if strings.Contains(got.stderr, "Usage:") || strings.Contains(got.stderr, "Error:") {
 		t.Errorf("stderr = %q, want concise plain-text diagnostics", got.stderr)
+	}
+}
+
+func TestNewCreatesTopLevelAndSkillDraftsUnderAnOrganizationWithoutAnEditor(t *testing.T) {
+	t.Parallel()
+
+	for _, storedPath := range []string{"review", "frontend/review"} {
+		t.Run(storedPath, func(t *testing.T) {
+			t.Parallel()
+
+			configDirectory := t.TempDir()
+			got := runApplicationWithEnvironment(t, []string{"XDG_CONFIG_HOME=" + configDirectory}, "skills", "new", storedPath)
+
+			if got.exitCode != 0 {
+				t.Fatalf("exit code = %d, want 0; stderr = %q", got.exitCode, got.stderr)
+			}
+			if got.stdout != "" || got.stderr != "" {
+				t.Errorf("stdout = %q, stderr = %q; want silent success", got.stdout, got.stderr)
+			}
+			document, err := os.ReadFile(filepath.Join(configDirectory, "bond", "skills", filepath.FromSlash(storedPath), "SKILL.md"))
+			if err != nil {
+				t.Fatalf("read Skill Draft: %v", err)
+			}
+			if string(document) != "---\nname: review\ndescription: \"\"\n---\n" {
+				t.Errorf("SKILL.md = %q, want minimal Skill Draft", document)
+			}
+		})
+	}
+}
+
+func TestNewRejectsInvalidStoredPathsBeforeCreatingTheStore(t *testing.T) {
+	t.Parallel()
+
+	for _, storedPath := range []string{"", "/review", "frontend/", "frontend//review", "./review", "../review", "frontend/../review", "one/two/review", "Bad-Name", "bad--name", "frontend/Bad-Name"} {
+		t.Run(strings.ReplaceAll(storedPath, "/", "_"), func(t *testing.T) {
+			t.Parallel()
+
+			configDirectory := t.TempDir()
+			got := runApplicationWithEnvironment(t, []string{"XDG_CONFIG_HOME=" + configDirectory}, "skills", "new", storedPath)
+
+			if got.exitCode != 1 {
+				t.Errorf("exit code = %d, want 1", got.exitCode)
+			}
+			if got.stdout != "" || got.stderr == "" {
+				t.Errorf("stdout = %q, stderr = %q; want one diagnostic", got.stdout, got.stderr)
+			}
+			store := filepath.Join(configDirectory, "bond", "skills")
+			if _, err := os.Stat(store); !os.IsNotExist(err) {
+				t.Errorf("Store was created or could not be inspected: %v", err)
+			}
+		})
+	}
+}
+
+func TestNewDoesNotModifyExistingEntries(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name       string
+		storedPath string
+		prepare    func(*testing.T, string)
+		unchanged  func(*testing.T, string)
+	}{
+		{
+			name:       "destination directory",
+			storedPath: "review",
+			prepare: func(t *testing.T, store string) {
+				writeSkillDocument(t, filepath.Join(store, "review"), []byte("existing"))
+			},
+			unchanged: func(t *testing.T, store string) {
+				contents, err := os.ReadFile(filepath.Join(store, "review", "SKILL.md"))
+				if err != nil || string(contents) != "existing" {
+					t.Errorf("existing destination changed: contents = %q, err = %v", contents, err)
+				}
+			},
+		},
+		{
+			name:       "destination file",
+			storedPath: "review",
+			prepare: func(t *testing.T, store string) {
+				if err := os.MkdirAll(store, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(store, "review"), []byte("existing"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			unchanged: func(t *testing.T, store string) {
+				contents, err := os.ReadFile(filepath.Join(store, "review"))
+				if err != nil || string(contents) != "existing" {
+					t.Errorf("existing destination changed: contents = %q, err = %v", contents, err)
+				}
+			},
+		},
+		{
+			name:       "organization file",
+			storedPath: "frontend/review",
+			prepare: func(t *testing.T, store string) {
+				if err := os.MkdirAll(store, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(store, "frontend"), []byte("existing"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			unchanged: func(t *testing.T, store string) {
+				contents, err := os.ReadFile(filepath.Join(store, "frontend"))
+				if err != nil || string(contents) != "existing" {
+					t.Errorf("existing Organization entry changed: contents = %q, err = %v", contents, err)
+				}
+			},
+		},
+		{
+			name:       "Stored Skill used as Organization",
+			storedPath: "frontend/review",
+			prepare: func(t *testing.T, store string) {
+				writeSkill(t, filepath.Join(store, "frontend"), "frontend", "Existing Skill")
+			},
+			unchanged: func(t *testing.T, store string) {
+				if _, err := os.Stat(filepath.Join(store, "frontend", "review")); !os.IsNotExist(err) {
+					t.Errorf("nested Skill Draft was created in an existing Stored Skill: %v", err)
+				}
+			},
+		},
+		{
+			name:       "symlink used as Organization",
+			storedPath: "frontend/review",
+			prepare: func(t *testing.T, store string) {
+				if err := os.MkdirAll(filepath.Join(store, "target"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("target", filepath.Join(store, "frontend")); err != nil {
+					t.Fatal(err)
+				}
+			},
+			unchanged: func(t *testing.T, store string) {
+				if _, err := os.Stat(filepath.Join(store, "target", "review")); !os.IsNotExist(err) {
+					t.Errorf("Skill Draft was created through an Organization symlink: %v", err)
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			configDirectory := t.TempDir()
+			store := filepath.Join(configDirectory, "bond", "skills")
+			test.prepare(t, store)
+
+			got := runApplicationWithEnvironment(t, []string{"XDG_CONFIG_HOME=" + configDirectory}, "skills", "new", test.storedPath)
+
+			if got.exitCode != 1 || got.stdout != "" || got.stderr == "" {
+				t.Errorf("exit code = %d, stdout = %q, stderr = %q; want concise failure", got.exitCode, got.stdout, got.stderr)
+			}
+			test.unchanged(t, store)
+		})
+	}
+}
+
+func TestNewRunsQuotedEditorArgumentsDirectlyFromTheSkillDraftDirectory(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	editorDirectory := t.TempDir()
+	editor := filepath.Join(editorDirectory, "record editor")
+	record := filepath.Join(editorDirectory, "record")
+	script := "#!/bin/sh\nprintf '%s\\n' \"$PWD\" \"$@\" > \"$RECORD\"\nprintf 'stdin=%s\\n' \"$(cat)\"\nprintf '\\nAuthored body\\n' >> SKILL.md\n"
+	if err := os.WriteFile(editor, []byte(script), 0o755); err != nil {
+		t.Fatalf("write editor: %v", err)
+	}
+	environment := []string{
+		"XDG_CONFIG_HOME=" + configDirectory,
+		"EDITOR='" + editor + "' --wait \"two words\" | touch should-not-exist",
+		"RECORD=" + record,
+		"PATH=" + os.Getenv("PATH"),
+	}
+
+	got := runApplicationInDirectory(t, t.TempDir(), environment, "hello", "skills", "new", "review")
+
+	if got.exitCode != 1 {
+		t.Fatalf("exit code = %d, want 1 because description remains empty; stderr = %q", got.exitCode, got.stderr)
+	}
+	if got.stdout != "stdin=hello\n" {
+		t.Errorf("stdout = %q, want inherited editor output", got.stdout)
+	}
+	if !strings.Contains(got.stderr, "description") {
+		t.Errorf("stderr = %q, want post-editor validation diagnostic", got.stderr)
+	}
+	skillDraftDirectory := filepath.Join(configDirectory, "bond", "skills", "review")
+	recorded, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("read editor record: %v", err)
+	}
+	physicalSkillDraftDirectory, err := filepath.EvalSymlinks(skillDraftDirectory)
+	if err != nil {
+		t.Fatalf("resolve Skill Draft directory: %v", err)
+	}
+	wantRecord := physicalSkillDraftDirectory + "\n--wait\ntwo words\n|\ntouch\nshould-not-exist\nSKILL.md\n"
+	if string(recorded) != wantRecord {
+		t.Errorf("editor record = %q, want %q", recorded, wantRecord)
+	}
+	if _, err := os.Stat(filepath.Join(skillDraftDirectory, "should-not-exist")); !os.IsNotExist(err) {
+		t.Errorf("shell operator was evaluated: %v", err)
+	}
+	document, err := os.ReadFile(filepath.Join(skillDraftDirectory, "SKILL.md"))
+	if err != nil || !strings.Contains(string(document), "Authored body") {
+		t.Errorf("edited Skill Draft was not retained: contents = %q, err = %v", document, err)
+	}
+}
+
+func TestNewRetainsSkillDraftWhenEditorFails(t *testing.T) {
+	t.Parallel()
+
+	for _, editor := range []string{"/definitely/missing/editor", "/bin/sh -c 'exit 7'"} {
+		t.Run(editor, func(t *testing.T) {
+			t.Parallel()
+
+			configDirectory := t.TempDir()
+			got := runApplicationWithEnvironment(t, []string{"XDG_CONFIG_HOME=" + configDirectory, "EDITOR=" + editor}, "skills", "new", "review")
+
+			if got.exitCode != 1 || got.stdout != "" || got.stderr == "" {
+				t.Errorf("exit code = %d, stdout = %q, stderr = %q; want editor failure", got.exitCode, got.stdout, got.stderr)
+			}
+			if _, err := os.Stat(filepath.Join(configDirectory, "bond", "skills", "review", "SKILL.md")); err != nil {
+				t.Errorf("Skill Draft was not retained: %v", err)
+			}
+		})
+	}
+}
+
+func TestNewAcceptsValidContentAfterEditorExits(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	editorDirectory := t.TempDir()
+	editor := filepath.Join(editorDirectory, "author")
+	script := "#!/bin/sh\nprintf '%s\\n' '---' 'name: review' 'description: Authored Skill' '---' > SKILL.md\n"
+	if err := os.WriteFile(editor, []byte(script), 0o755); err != nil {
+		t.Fatalf("write editor: %v", err)
+	}
+
+	got := runApplicationWithEnvironment(t, []string{"XDG_CONFIG_HOME=" + configDirectory, "EDITOR=" + editor}, "skills", "new", "review")
+
+	if got.exitCode != 0 || got.stdout != "" || got.stderr != "" {
+		t.Errorf("exit code = %d, stdout = %q, stderr = %q; want silent success", got.exitCode, got.stdout, got.stderr)
 	}
 }
 
