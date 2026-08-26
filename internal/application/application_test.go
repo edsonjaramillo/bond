@@ -3,6 +3,7 @@ package application
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1075,6 +1076,243 @@ func TestAddRecoversInterruptedPublicationBeforeNextMutation(t *testing.T) {
 	}
 	if _, err := os.Lstat(filepath.Join(project, ".agents", "bond-journal.json")); !os.IsNotExist(err) {
 		t.Errorf("transaction journal remains after recovery: %v", err)
+	}
+}
+
+func TestAddRecoversInterruptionsAtEveryJournaledPhaseBeforeNextMutation(t *testing.T) {
+	for _, test := range []struct {
+		name                 string
+		interruptionPoint    string
+		interruptedCommitted bool
+	}{
+		{name: "journal written", interruptionPoint: afterJournalWrite},
+		{name: "first publication", interruptionPoint: afterFirstPublish},
+		{name: "all publications", interruptionPoint: afterAllPublishes},
+		{name: "manifest written", interruptionPoint: afterManifestWrite, interruptedCommitted: true},
+		{name: "staging removed", interruptionPoint: afterStageRemoval, interruptedCommitted: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			configDirectory := t.TempDir()
+			store := filepath.Join(configDirectory, "bond", "skills")
+			for _, name := range []string{"base", "review", "deploy", "lint"} {
+				writeSkill(t, filepath.Join(store, name), name, name+" changes")
+			}
+			project := t.TempDir()
+			environment := []string{"XDG_CONFIG_HOME=" + configDirectory}
+			initial := runApplicationInDirectory(t, project, environment, "", "skills", "add", "base")
+			if initial.exitCode != 0 {
+				t.Fatalf("initial exit code = %d, stderr = %q", initial.exitCode, initial.stderr)
+			}
+
+			interrupted := runApplicationWithDependencies(t, project, environment, "", Dependencies{TransactionInterruptionPoint: test.interruptionPoint}, "skills", "add", "review", "deploy")
+			if interrupted.exitCode != 1 || interrupted.stdout != "" || interrupted.stderr == "" {
+				t.Fatalf("interrupted exit code = %d, stdout = %q, stderr = %q", interrupted.exitCode, interrupted.stdout, interrupted.stderr)
+			}
+
+			recovered := runApplicationInDirectory(t, project, environment, "", "skills", "add", "lint")
+			if recovered.exitCode != 0 || recovered.stdout != "" || recovered.stderr != "" {
+				t.Fatalf("recovered exit code = %d, stdout = %q, stderr = %q", recovered.exitCode, recovered.stdout, recovered.stderr)
+			}
+			for _, name := range []string{"review", "deploy"} {
+				_, err := os.Lstat(filepath.Join(project, ".agents", "skills", name))
+				if test.interruptedCommitted && err != nil {
+					t.Errorf("committed Project Skill %q is absent after recovery: %v", name, err)
+				}
+				if !test.interruptedCommitted && !os.IsNotExist(err) {
+					t.Errorf("uncommitted Project Skill %q remains after recovery: %v", name, err)
+				}
+			}
+			for _, name := range []string{"base", "lint"} {
+				if _, err := os.Lstat(filepath.Join(project, ".agents", "skills", name)); err != nil {
+					t.Errorf("Project Skill %q is absent after recovery: %v", name, err)
+				}
+			}
+			if _, err := os.Lstat(filepath.Join(project, ".agents", "bond-journal.json")); !os.IsNotExist(err) {
+				t.Errorf("transaction journal remains after recovery: %v", err)
+			}
+		})
+	}
+}
+
+func TestRecoveryPreservesStagedAndNewConflictingProjectSkills(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+	writeSkill(t, filepath.Join(store, "review"), "review", "Stored review")
+	writeSkill(t, filepath.Join(store, "lint"), "lint", "Stored lint")
+	project := t.TempDir()
+	environment := []string{"XDG_CONFIG_HOME=" + configDirectory}
+
+	interrupted := runApplicationWithDependencies(t, project, environment, "", Dependencies{TransactionInterruptionPoint: afterJournalWrite}, "skills", "add", "review")
+	if interrupted.exitCode != 1 {
+		t.Fatalf("interrupted exit code = %d, stderr = %q", interrupted.exitCode, interrupted.stderr)
+	}
+	staging, err := filepath.Glob(filepath.Join(project, ".agents", ".bond-stage-*"))
+	if err != nil || len(staging) != 1 {
+		t.Fatalf("staging paths = %q, err = %v; want one", staging, err)
+	}
+	stagedSkill := filepath.Join(staging[0], "review")
+	if _, err := os.Lstat(stagedSkill); err != nil {
+		t.Fatalf("staged Project Skill is absent: %v", err)
+	}
+	conflictingSkill := filepath.Join(project, ".agents", "skills", "review")
+	writeSkill(t, conflictingSkill, "review", "Created after interruption")
+
+	recovery := runApplicationInDirectory(t, project, environment, "", "skills", "add", "lint")
+	if recovery.exitCode != 1 || recovery.stdout != "" || !strings.Contains(recovery.stderr, "manual recovery") || !strings.Contains(recovery.stderr, "review") {
+		t.Fatalf("recovery exit code = %d, stdout = %q, stderr = %q", recovery.exitCode, recovery.stdout, recovery.stderr)
+	}
+	for _, path := range []string{stagedSkill, conflictingSkill, filepath.Join(project, ".agents", "bond-journal.json")} {
+		if _, err := os.Lstat(path); err != nil {
+			t.Errorf("recovery did not preserve %q: %v", path, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(project, ".agents", "skills", "lint")); !os.IsNotExist(err) {
+		t.Errorf("next mutation proceeded despite unresolved recovery: %v", err)
+	}
+}
+
+func TestRecoveryRejectsSymlinkedTransactionStagingWithoutTouchingItsTarget(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+	writeSkill(t, filepath.Join(store, "review"), "review", "Stored review")
+	writeSkill(t, filepath.Join(store, "lint"), "lint", "Stored lint")
+	project := t.TempDir()
+	environment := []string{"XDG_CONFIG_HOME=" + configDirectory}
+
+	interrupted := runApplicationWithDependencies(t, project, environment, "", Dependencies{TransactionInterruptionPoint: afterJournalWrite}, "skills", "add", "review")
+	if interrupted.exitCode != 1 {
+		t.Fatalf("interrupted exit code = %d, stderr = %q", interrupted.exitCode, interrupted.stderr)
+	}
+	staging, err := filepath.Glob(filepath.Join(project, ".agents", ".bond-stage-*"))
+	if err != nil || len(staging) != 1 {
+		t.Fatalf("staging paths = %q, err = %v; want one", staging, err)
+	}
+	if err := os.RemoveAll(staging[0]); err != nil {
+		t.Fatal(err)
+	}
+	target := t.TempDir()
+	marker := filepath.Join(target, "review")
+	if err := os.WriteFile(marker, []byte("outside Project"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, staging[0]); err != nil {
+		t.Fatal(err)
+	}
+
+	recovery := runApplicationInDirectory(t, project, environment, "", "skills", "add", "lint")
+	if recovery.exitCode != 1 || recovery.stdout != "" || !strings.Contains(recovery.stderr, "staging") || !strings.Contains(recovery.stderr, "symlink") {
+		t.Fatalf("recovery exit code = %d, stdout = %q, stderr = %q", recovery.exitCode, recovery.stdout, recovery.stderr)
+	}
+	contents, err := os.ReadFile(marker)
+	if err != nil || string(contents) != "outside Project" {
+		t.Errorf("staging target changed: contents = %q, err = %v", contents, err)
+	}
+	if _, err := os.Lstat(filepath.Join(project, ".agents", "bond-journal.json")); err != nil {
+		t.Errorf("journal was not retained after unsafe recovery: %v", err)
+	}
+}
+
+func TestRecoveryPreservesContentRecreatedAtRemovedStagingPath(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	writeSkill(t, filepath.Join(configDirectory, "bond", "skills", "review"), "review", "Stored review")
+	writeSkill(t, filepath.Join(configDirectory, "bond", "skills", "lint"), "lint", "Stored lint")
+	project := t.TempDir()
+	environment := []string{"XDG_CONFIG_HOME=" + configDirectory}
+
+	interrupted := runApplicationWithDependencies(t, project, environment, "", Dependencies{TransactionInterruptionPoint: afterStageRemoval}, "skills", "add", "review")
+	if interrupted.exitCode != 1 {
+		t.Fatalf("interrupted exit code = %d, stderr = %q", interrupted.exitCode, interrupted.stderr)
+	}
+	journal, err := os.ReadFile(filepath.Join(project, ".agents", "bond-journal.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state struct {
+		StageDirectory string `json:"stageDirectory"`
+	}
+	if err := json.Unmarshal(journal, &state); err != nil {
+		t.Fatal(err)
+	}
+	recreatedStage := filepath.Join(project, ".agents", state.StageDirectory)
+	if err := os.Mkdir(recreatedStage, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(recreatedStage, "created-after-interruption")
+	if err := os.WriteFile(marker, []byte("preserve me"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	recovery := runApplicationInDirectory(t, project, environment, "", "skills", "add", "lint")
+	if recovery.exitCode != 1 || !strings.Contains(recovery.stderr, "manual recovery") {
+		t.Fatalf("recovery exit code = %d, stderr = %q", recovery.exitCode, recovery.stderr)
+	}
+	if contents, err := os.ReadFile(marker); err != nil || string(contents) != "preserve me" {
+		t.Errorf("recreated staging content changed: contents = %q, err = %v", contents, err)
+	}
+	if _, err := os.Lstat(filepath.Join(project, ".agents", "bond-journal.json")); err != nil {
+		t.Errorf("journal was not retained: %v", err)
+	}
+}
+
+func TestRecoveryRetainsJournalWhenNewInfrastructureContentPreventsRollback(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	writeSkill(t, filepath.Join(configDirectory, "bond", "skills", "review"), "review", "Stored review")
+	writeSkill(t, filepath.Join(configDirectory, "bond", "skills", "lint"), "lint", "Stored lint")
+	project := t.TempDir()
+	environment := []string{"XDG_CONFIG_HOME=" + configDirectory}
+
+	interrupted := runApplicationWithDependencies(t, project, environment, "", Dependencies{TransactionInterruptionPoint: afterJournalWrite}, "skills", "add", "review")
+	if interrupted.exitCode != 1 {
+		t.Fatalf("interrupted exit code = %d, stderr = %q", interrupted.exitCode, interrupted.stderr)
+	}
+	marker := filepath.Join(project, ".agents", "skills", "created-after-interruption")
+	if err := os.WriteFile(marker, []byte("preserve me"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	recovery := runApplicationInDirectory(t, project, environment, "", "skills", "add", "lint")
+	if recovery.exitCode != 1 || !strings.Contains(recovery.stderr, "manual recovery") || !strings.Contains(recovery.stderr, "move the conflicting path aside") {
+		t.Fatalf("recovery exit code = %d, stderr = %q", recovery.exitCode, recovery.stderr)
+	}
+	if contents, err := os.ReadFile(marker); err != nil || string(contents) != "preserve me" {
+		t.Errorf("new infrastructure content changed: contents = %q, err = %v", contents, err)
+	}
+	if _, err := os.Lstat(filepath.Join(project, ".agents", "bond-journal.json")); err != nil {
+		t.Errorf("journal was not retained: %v", err)
+	}
+}
+
+func TestListAndEditFailWhileProjectTransactionIsUnresolved(t *testing.T) {
+	t.Parallel()
+
+	configDirectory := t.TempDir()
+	writeSkill(t, filepath.Join(configDirectory, "bond", "skills", "review"), "review", "Stored review")
+	project := t.TempDir()
+	environment := []string{"XDG_CONFIG_HOME=" + configDirectory, "EDITOR=" + filepath.Join(t.TempDir(), "must-not-run")}
+
+	interrupted := runApplicationWithDependencies(t, project, environment, "", Dependencies{TransactionInterruptionPoint: afterJournalWrite}, "skills", "add", "review")
+	if interrupted.exitCode != 1 {
+		t.Fatalf("interrupted exit code = %d, stderr = %q", interrupted.exitCode, interrupted.stderr)
+	}
+
+	for _, arguments := range [][]string{{"skills", "list"}, {"skills", "edit", "review"}} {
+		got := runApplicationInDirectory(t, project, environment, "", arguments...)
+		if got.exitCode != 1 || got.stdout != "" || !strings.Contains(got.stderr, "requires recovery") {
+			t.Errorf("arguments = %q, exit code = %d, stdout = %q, stderr = %q", arguments, got.exitCode, got.stdout, got.stderr)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(project, ".agents", "bond-journal.json")); err != nil {
+		t.Errorf("read-only commands changed unresolved transaction: %v", err)
 	}
 }
 

@@ -132,6 +132,17 @@ func readAddJournal(agentsDirectory string) (addTransactionJournal, bool, error)
 	if journal.Version != 1 || filepath.Base(journal.StageDirectory) != journal.StageDirectory || !strings.HasPrefix(journal.StageDirectory, ".bond-stage-") {
 		return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
 	}
+	stageInfo, stageErr := os.Lstat(filepath.Join(agentsDirectory, journal.StageDirectory))
+	if stageErr == nil {
+		if stageInfo.Mode()&os.ModeSymlink != 0 {
+			return addTransactionJournal{}, false, fmt.Errorf("project transaction staging must not be a symlink")
+		}
+		if !stageInfo.IsDir() {
+			return addTransactionJournal{}, false, fmt.Errorf("project transaction staging must be a directory")
+		}
+	} else if !os.IsNotExist(stageErr) {
+		return addTransactionJournal{}, false, fmt.Errorf("inspect Project transaction staging: %w", stageErr)
+	}
 	if journal.PreviousManifest.Version != manifestVersion || journal.PreviousManifest.Skills == nil || journal.NextManifest.Version != manifestVersion || journal.NextManifest.Skills == nil {
 		return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
 	}
@@ -191,6 +202,9 @@ func recoverInterruptedAdd(agentsDirectory string) error {
 }
 
 func rollbackAddTransaction(agentsDirectory string, journal addTransactionJournal, restoreManifest bool) error {
+	if err := validateRollbackPaths(agentsDirectory, journal); err != nil {
+		return err
+	}
 	if restoreManifest {
 		if err := restorePreviousManifest(agentsDirectory, journal); err != nil {
 			return err
@@ -204,6 +218,13 @@ func rollbackAddTransaction(agentsDirectory string, journal addTransactionJourna
 		_, destinationErr := os.Lstat(destination)
 		if stageErr == nil && destinationErr == nil {
 			return manualRecoveryError(agentsDirectory, fmt.Sprintf("destination %q was created after interruption", installation.Destination))
+		}
+		if stageErr == nil {
+			if err := os.Remove(staged); err != nil {
+				return fmt.Errorf("remove staged Project Skill %q: %w", installation.Name, err)
+			}
+		} else if !os.IsNotExist(stageErr) {
+			return manualRecoveryError(agentsDirectory, fmt.Sprintf("staged Project Skill %q cannot be inspected", installation.Name))
 		}
 		if !os.IsNotExist(destinationErr) {
 			if destinationErr != nil {
@@ -221,36 +242,130 @@ func rollbackAddTransaction(agentsDirectory string, journal addTransactionJourna
 			}
 		}
 	}
-	if err := os.RemoveAll(stageDirectory); err != nil {
-		return fmt.Errorf("remove Project transaction staging: %w", err)
-	}
-	if err := syncDirectory(agentsDirectory); err != nil {
-		return err
-	}
-	if err := os.Remove(journalPath(agentsDirectory)); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove Project transaction journal: %w", err)
-	}
-	if err := syncDirectory(agentsDirectory); err != nil {
+	if err := removeEmptyStageDirectory(agentsDirectory, journal); err != nil {
 		return err
 	}
 	if journal.CreatedSkillsDirectory {
-		if err := os.Remove(filepath.Join(agentsDirectory, "skills")); err != nil {
+		if err := os.Remove(filepath.Join(agentsDirectory, "skills")); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("remove newly created Project infrastructure .agents/skills: %w", err)
 		}
 		if err := syncDirectory(agentsDirectory); err != nil {
 			return err
 		}
 	}
+	if err := removeJournalDurably(agentsDirectory, journal); err != nil {
+		return err
+	}
 	if journal.CreatedAgentsDirectory {
 		if err := os.Remove(agentsDirectory); err != nil {
-			return fmt.Errorf("remove newly created Project infrastructure .agents: %w", err)
+			restoreErr := writeAddJournal(agentsDirectory, journal)
+
+			return errors.Join(manualRecoveryError(agentsDirectory, "new Project infrastructure appeared after interruption"), restoreErr)
 		}
 		if err := syncDirectory(filepath.Dir(agentsDirectory)); err != nil {
 			return err
 		}
+
+		return nil
+	}
+	return nil
+}
+
+func removeJournalDurably(agentsDirectory string, journal addTransactionJournal) error {
+	if err := os.Remove(journalPath(agentsDirectory)); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("remove Project transaction journal: %w", err)
+	}
+	if err := syncDirectory(agentsDirectory); err != nil {
+		restoreErr := writeAddJournal(agentsDirectory, journal)
+
+		return errors.Join(err, restoreErr)
 	}
 
 	return nil
+}
+
+func validateRollbackPaths(agentsDirectory string, journal addTransactionJournal) error {
+	stageDirectory := filepath.Join(agentsDirectory, journal.StageDirectory)
+	stageEntries, err := os.ReadDir(stageDirectory)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read Project transaction staging: %w", err)
+	}
+	installations := make(map[string]stagedInstallation, len(journal.Installations))
+	for _, installation := range journal.Installations {
+		installations[installation.Name] = installation
+	}
+	for _, entry := range stageEntries {
+		installation, exists := installations[entry.Name()]
+		if !exists {
+			return manualRecoveryError(agentsDirectory, fmt.Sprintf("staging path %q was created after interruption", entry.Name()))
+		}
+		target, readErr := os.Readlink(filepath.Join(stageDirectory, entry.Name()))
+		if readErr != nil || target != installation.Source {
+			return manualRecoveryError(agentsDirectory, fmt.Sprintf("staged Project Skill %q conflicts with the transaction", entry.Name()))
+		}
+	}
+	skillsDirectory := filepath.Join(agentsDirectory, "skills")
+	skillsExist, inspectErr := realDirectoryIfPresent(skillsDirectory, ".agents/skills")
+	if inspectErr != nil {
+		return inspectErr
+	}
+	if !journal.CreatedSkillsDirectory {
+		if !skillsExist {
+			return manualRecoveryError(agentsDirectory, "Project infrastructure .agents/skills disappeared after interruption")
+		}
+
+		return nil
+	}
+	var skillEntries []os.DirEntry
+	if skillsExist {
+		skillEntries, err = os.ReadDir(skillsDirectory)
+		if err != nil {
+			return fmt.Errorf("read newly created Project infrastructure .agents/skills: %w", err)
+		}
+	}
+	for _, entry := range skillEntries {
+		if _, exists := installations[entry.Name()]; !exists {
+			return manualRecoveryError(agentsDirectory, fmt.Sprintf("Project Skill path %q was created after interruption", entry.Name()))
+		}
+	}
+	if journal.CreatedAgentsDirectory {
+		allowed := map[string]bool{
+			"bond-journal.json":    true,
+			"bond-manifest.json":   true,
+			"skills":               true,
+			journal.StageDirectory: true,
+		}
+		agentEntries, readErr := os.ReadDir(agentsDirectory)
+		if readErr != nil {
+			return fmt.Errorf("read newly created Project infrastructure .agents: %w", readErr)
+		}
+		for _, entry := range agentEntries {
+			if !allowed[entry.Name()] {
+				return manualRecoveryError(agentsDirectory, fmt.Sprintf("Project infrastructure path %q was created after interruption", entry.Name()))
+			}
+		}
+	}
+
+	return nil
+}
+
+func removeEmptyStageDirectory(agentsDirectory string, journal addTransactionJournal) error {
+	stageDirectory := filepath.Join(agentsDirectory, journal.StageDirectory)
+	entries, err := os.ReadDir(stageDirectory)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read Project transaction staging: %w", err)
+	}
+	if len(entries) != 0 {
+		return manualRecoveryError(agentsDirectory, "transaction staging contains paths created after interruption")
+	}
+	if err := os.Remove(stageDirectory); err != nil {
+		return fmt.Errorf("remove Project transaction staging: %w", err)
+	}
+
+	return syncDirectory(agentsDirectory)
 }
 
 func restorePreviousManifest(agentsDirectory string, journal addTransactionJournal) error {
@@ -278,17 +393,11 @@ func verifyPublishedInstallations(agentsDirectory string, journal addTransaction
 }
 
 func cleanupCommittedAdd(agentsDirectory string, journal addTransactionJournal) error {
-	if err := os.RemoveAll(filepath.Join(agentsDirectory, journal.StageDirectory)); err != nil {
-		return fmt.Errorf("remove Project transaction staging: %w", err)
-	}
-	if err := syncDirectory(agentsDirectory); err != nil {
+	if err := removeEmptyStageDirectory(agentsDirectory, journal); err != nil {
 		return err
 	}
-	if err := os.Remove(journalPath(agentsDirectory)); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove Project transaction journal: %w", err)
-	}
 
-	return syncDirectory(agentsDirectory)
+	return removeJournalDurably(agentsDirectory, journal)
 }
 
 func readManifestState(agentsDirectory string) (projectManifest, bool, error) {
@@ -305,7 +414,7 @@ func readManifestState(agentsDirectory string) (projectManifest, bool, error) {
 }
 
 func manualRecoveryError(agentsDirectory, reason string) error {
-	return fmt.Errorf("project transaction requires manual recovery in %q: %s; preserve bond-journal.json and staging paths", agentsDirectory, reason)
+	return fmt.Errorf("project transaction requires manual recovery in %q: %s; preserve bond-journal.json and staging paths, move the conflicting path aside, then rerun Bond", agentsDirectory, reason)
 }
 
 func syncDirectory(path string) error {

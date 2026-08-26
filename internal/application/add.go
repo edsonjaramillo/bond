@@ -11,7 +11,13 @@ import (
 	"github.com/spf13/cobra"
 )
 
-const afterFirstPublish = "after-first-publish"
+const (
+	afterJournalWrite  = "after-journal-write"
+	afterFirstPublish  = "after-first-publish"
+	afterAllPublishes  = "after-all-publishes"
+	afterManifestWrite = "after-manifest-write"
+	afterStageRemoval  = "after-stage-removal"
+)
 
 type requestedInstallation struct {
 	argument string
@@ -107,6 +113,9 @@ func addLinkedSkills(command *cobra.Command, invocation Invocation, storedSkillP
 
 		return errors.Join(err, cleanupStagedAdd(stageDirectory, filepath.Join(agentsDirectory, "skills"), agentsDirectory, createdSkills, createdAgents))
 	}
+	if invocation.transactionInterruptionPoint == afterJournalWrite {
+		return fmt.Errorf("interrupted Project transaction after journal write")
+	}
 
 	for index, installation := range installations {
 		staged := filepath.Join(stageDirectory, installation.Name)
@@ -129,8 +138,24 @@ func addLinkedSkills(command *cobra.Command, invocation Invocation, storedSkillP
 			return errors.Join(fmt.Errorf("publish linked Project Skill batch: injected failure"), rollbackAddTransaction(agentsDirectory, journal, false))
 		}
 	}
+	if invocation.transactionInterruptionPoint == afterAllPublishes {
+		return fmt.Errorf("interrupted Project transaction after all publications")
+	}
 	if err := writeProjectManifest(agentsDirectory, nextManifest); err != nil {
 		return errors.Join(err, rollbackAddTransaction(agentsDirectory, journal, true))
+	}
+	if invocation.transactionInterruptionPoint == afterManifestWrite {
+		return fmt.Errorf("interrupted Project transaction after manifest write")
+	}
+	if invocation.transactionInterruptionPoint == afterStageRemoval {
+		if err := os.RemoveAll(stageDirectory); err != nil {
+			return fmt.Errorf("remove Project transaction staging: %w", err)
+		}
+		if err := syncDirectory(agentsDirectory); err != nil {
+			return err
+		}
+
+		return fmt.Errorf("interrupted Project transaction after staging removal")
 	}
 	if err := cleanupCommittedAdd(agentsDirectory, journal); err != nil {
 		return errors.Join(err, rollbackAddTransaction(agentsDirectory, journal, true))
