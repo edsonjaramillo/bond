@@ -104,6 +104,7 @@ func newSkillsCommand(invocation Invocation) *cobra.Command {
 	command.AddCommand(newListCommand(invocation))
 	command.AddCommand(newSkillDraftCommand(invocation))
 	command.AddCommand(newAddCommand(invocation))
+	command.AddCommand(newRemoveCommand(invocation))
 	command.AddCommand(newEditCommand(invocation))
 
 	return command
@@ -139,6 +140,17 @@ func newAddCommand(invocation Invocation) *cobra.Command {
 	command.Flags().BoolVar(&copySkills, "copy", false, "install independent copies")
 
 	return command
+}
+
+func newRemoveCommand(invocation Invocation) *cobra.Command {
+	return &cobra.Command{
+		Use:   "remove <skill-name>...",
+		Short: "Remove Managed Skills",
+		Args:  cobra.MinimumNArgs(1),
+		RunE: func(command *cobra.Command, arguments []string) error {
+			return removeSkills(command, invocation, arguments)
+		},
+	}
 }
 
 func newEditCommand(invocation Invocation) *cobra.Command {

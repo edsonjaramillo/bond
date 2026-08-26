@@ -72,6 +72,7 @@ func (lock *projectLock) release() error {
 
 type addTransactionJournal struct {
 	Version                 int                  `json:"version"`
+	Operation               string               `json:"operation,omitempty"`
 	StageDirectory          string               `json:"stageDirectory"`
 	CreatedAgentsDirectory  bool                 `json:"createdAgentsDirectory"`
 	CreatedSkillsDirectory  bool                 `json:"createdSkillsDirectory"`
@@ -79,6 +80,15 @@ type addTransactionJournal struct {
 	PreviousManifest        projectManifest      `json:"previousManifest"`
 	NextManifest            projectManifest      `json:"nextManifest"`
 	Installations           []stagedInstallation `json:"installations"`
+	Removals                []stagedRemoval      `json:"removals,omitempty"`
+}
+
+type stagedRemoval struct {
+	Name        string             `json:"name"`
+	Mode        installationMode   `json:"mode"`
+	Identity    filesystemIdentity `json:"identity,omitempty"`
+	Destination string             `json:"destination"`
+	Present     bool               `json:"present"`
 }
 
 type stagedInstallation struct {
@@ -155,22 +165,39 @@ func readAddJournal(agentsDirectory string) (addTransactionJournal, bool, error)
 	if err := validateManifestRecords(journal.NextManifest.Skills); err != nil {
 		return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt: invalid next manifest: %w", err)
 	}
-	for index := range journal.Installations {
-		installation := &journal.Installations[index]
-		if installation.Mode == "" {
-			installation.Mode = linkMode
-		}
-		if !validProjectSkillBasename(installation.Name) || !filepath.IsAbs(installation.Source) || installation.Destination != filepath.ToSlash(filepath.Join("skills", installation.Name)) {
+	if journal.Operation != "" && journal.Operation != "remove" {
+		return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
+	}
+	if journal.Operation == "remove" {
+		if len(journal.Installations) != 0 || len(journal.Removals) == 0 || journal.CreatedAgentsDirectory || journal.CreatedSkillsDirectory || !journal.PreviousManifestExisted {
 			return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
 		}
-		if installation.Mode != linkMode && installation.Mode != copyMode {
+		for _, removal := range journal.Removals {
+			if !validProjectSkillBasename(removal.Name) || removal.Destination != filepath.ToSlash(filepath.Join("skills", removal.Name)) || (removal.Mode != linkMode && removal.Mode != copyMode) || (removal.Present != removal.Identity.recorded()) {
+				return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
+			}
+		}
+	} else {
+		if len(journal.Removals) != 0 {
 			return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
 		}
-		if installation.Mode == linkMode && installation.Fingerprint != "" {
-			return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
-		}
-		if installation.Mode == copyMode && (!installation.Identity.recorded() || !installation.Fingerprint.valid()) {
-			return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
+		for index := range journal.Installations {
+			installation := &journal.Installations[index]
+			if installation.Mode == "" {
+				installation.Mode = linkMode
+			}
+			if !validProjectSkillBasename(installation.Name) || !filepath.IsAbs(installation.Source) || installation.Destination != filepath.ToSlash(filepath.Join("skills", installation.Name)) {
+				return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
+			}
+			if installation.Mode != linkMode && installation.Mode != copyMode {
+				return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
+			}
+			if installation.Mode == linkMode && installation.Fingerprint != "" {
+				return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
+			}
+			if installation.Mode == copyMode && (!installation.Identity.recorded() || !installation.Fingerprint.valid()) {
+				return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
+			}
 		}
 	}
 
@@ -202,6 +229,9 @@ func recoverInterruptedAdd(agentsDirectory string) error {
 	current, currentExists, err := readManifestState(agentsDirectory)
 	if err != nil {
 		return err
+	}
+	if journal.Operation == "remove" {
+		return recoverInterruptedRemove(agentsDirectory, journal, current, currentExists)
 	}
 	if currentExists && reflect.DeepEqual(current, journal.NextManifest) {
 		if err := verifyPublishedInstallations(agentsDirectory, journal); err != nil {
