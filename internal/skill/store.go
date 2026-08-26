@@ -11,8 +11,9 @@ import (
 
 // StoreDiscovery is the observable result of inspecting a Store.
 type StoreDiscovery struct {
-	Paths       []string
-	Diagnostics []string
+	Paths         []string
+	Organizations []string
+	Diagnostics   []string
 }
 
 // ProjectDiscovery is the observable result of inspecting a Project Skill collection.
@@ -103,6 +104,7 @@ func DiscoverStore(store string) (StoreDiscovery, error) {
 		discoverRootEntry(store, entry, &discovery)
 	}
 	sort.Strings(discovery.Paths)
+	sort.Strings(discovery.Organizations)
 
 	return discovery, nil
 }
@@ -147,6 +149,9 @@ func discoverOrganization(path, name string, discovery *StoreDiscovery) {
 		discovery.Diagnostics = append(discovery.Diagnostics, fmt.Sprintf("%s: read Organization: %v", name, err))
 
 		return
+	}
+	if organizationValid {
+		discovery.Organizations = append(discovery.Organizations, name)
 	}
 	for _, entry := range entries {
 		relativePath := filepath.ToSlash(filepath.Join(name, entry.Name()))

@@ -146,6 +146,182 @@ func TestCompletionScripts(t *testing.T) {
 	}
 }
 
+func TestSkillArgumentCompletionSuggestsActionableIdentifiers(t *testing.T) {
+	t.Parallel()
+
+	project := t.TempDir()
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "skills")
+	writeSkill(t, filepath.Join(store, "alpha"), "alpha", "Top-level Skill")
+	writeSkill(t, filepath.Join(store, "check"), "check", "Top-level check Skill")
+	writeSkill(t, filepath.Join(store, "team", "check"), "check", "Organized check Skill")
+	writeSkill(t, filepath.Join(store, "team", "review"), "review", "Organized Skill")
+	writeSkill(t, filepath.Join(project, ".agents", "skills", "review"), "review", "Managed Skill")
+	writeSkill(t, filepath.Join(project, ".agents", "skills", "unmanaged"), "unmanaged", "Unmanaged Skill")
+	if err := writeProjectManifest(filepath.Join(project, ".agents"), projectManifest{
+		Version: manifestVersion,
+		Skills: []managedSkillRecord{{
+			Name: "review", Source: "team/review", Mode: linkMode, Destination: ".agents/skills/review",
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	environment := []string{"XDG_CONFIG_HOME=" + configDirectory}
+
+	for _, test := range []struct {
+		name       string
+		command    string
+		candidates string
+		directive  string
+		arguments  []string
+	}{
+		{name: "new suggests Organizations", command: "new", candidates: "team/\n", directive: "6"},
+		{name: "add suggests uninstalled Stored Skills", command: "add", candidates: "alpha\ncheck\nteam/check\n", directive: "4"},
+		{name: "add omits canonical names already selected", command: "add", arguments: []string{"team/check"}, candidates: "alpha\n", directive: "4"},
+		{name: "edit suggests all Project Skills", command: "edit", candidates: "review\nunmanaged\n", directive: "4"},
+		{name: "remove suggests manifest-owned Managed Skills", command: "remove", candidates: "review\n", directive: "4"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			arguments := append([]string{"__complete", "skills", test.command}, test.arguments...)
+			arguments = append(arguments, "")
+			got := runApplicationInDirectory(t, project, environment, "", arguments...)
+			if got.exitCode != 0 {
+				t.Fatalf("exit code = %d, want 0; stderr = %q", got.exitCode, got.stderr)
+			}
+			if got.stdout != test.candidates+":"+test.directive+"\n" {
+				t.Errorf("stdout = %q, want candidates followed by Cobra directive %s", got.stdout, test.directive)
+			}
+			if strings.Contains(got.stderr, "Error:") {
+				t.Errorf("stderr = %q, want no completion diagnostic", got.stderr)
+			}
+		})
+	}
+}
+
+func TestSkillArgumentCompletionFailsQuietly(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name       string
+		command    string
+		candidates string
+		prepare    func(t *testing.T, project, store string)
+	}{
+		{
+			name:       "malformed Stored Skill",
+			command:    "add",
+			candidates: "alpha\n",
+			prepare: func(t *testing.T, _ string, store string) {
+				writeSkill(t, filepath.Join(store, "alpha"), "alpha", "Valid Skill")
+				writeSkillDocument(t, filepath.Join(store, "broken"), []byte("not frontmatter\n"))
+			},
+		},
+		{
+			name:       "malformed Project Skill",
+			command:    "edit",
+			candidates: "alpha\n",
+			prepare: func(t *testing.T, project, _ string) {
+				writeSkill(t, filepath.Join(project, ".agents", "skills", "alpha"), "alpha", "Valid Skill")
+				writeSkillDocument(t, filepath.Join(project, ".agents", "skills", "broken"), []byte("not frontmatter\n"))
+			},
+		},
+		{
+			name:    "corrupt Project manifest",
+			command: "remove",
+			prepare: func(t *testing.T, project, _ string) {
+				agents := filepath.Join(project, ".agents")
+				if err := os.MkdirAll(agents, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(agents, "bond-manifest.json"), []byte("{broken"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name:    "symlinked Project infrastructure",
+			command: "edit",
+			prepare: func(t *testing.T, project, _ string) {
+				target := t.TempDir()
+				if err := os.Symlink(target, filepath.Join(project, ".agents")); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name:    "symlinked Project Skills infrastructure for remove",
+			command: "remove",
+			prepare: func(t *testing.T, project, _ string) {
+				agents := filepath.Join(project, ".agents")
+				if err := os.MkdirAll(agents, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := writeProjectManifest(agents, projectManifest{
+					Version: manifestVersion,
+					Skills:  []managedSkillRecord{{Name: "review", Source: "review", Mode: linkMode, Destination: ".agents/skills/review"}},
+				}); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(t.TempDir(), filepath.Join(agents, "skills")); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name:    "unreadable Organization",
+			command: "new",
+			prepare: func(t *testing.T, _ string, store string) {
+				organization := filepath.Join(store, "team")
+				if err := os.MkdirAll(organization, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(organization, 0); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(organization, 0o755) })
+			},
+		},
+		{
+			name:    "unresolved transaction",
+			command: "edit",
+			prepare: func(t *testing.T, project, _ string) {
+				agents := filepath.Join(project, ".agents")
+				if err := os.MkdirAll(agents, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := writeAddJournal(agents, addTransactionJournal{
+					Version: 1, StageDirectory: ".bond-stage-pending",
+					PreviousManifest: emptyProjectManifest(), NextManifest: emptyProjectManifest(),
+				}); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project := t.TempDir()
+			configDirectory := t.TempDir()
+			store := filepath.Join(configDirectory, "bond", "skills")
+			test.prepare(t, project, store)
+
+			got := runApplicationInDirectory(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "__complete", "skills", test.command, "")
+			if got.exitCode != 0 {
+				t.Fatalf("exit code = %d, want 0; stderr = %q", got.exitCode, got.stderr)
+			}
+			directive := "4"
+			if test.command == "new" {
+				directive = "6"
+			}
+			if got.stdout != test.candidates+":"+directive+"\n" {
+				t.Errorf("stdout = %q, want only valid candidates and Cobra directive %s", got.stdout, directive)
+			}
+			if strings.Contains(got.stderr, "Error:") {
+				t.Errorf("stderr = %q, want no completion diagnostic", got.stderr)
+			}
+		})
+	}
+}
+
 func writeSkill(t *testing.T, directory, name, description string) {
 	t.Helper()
 

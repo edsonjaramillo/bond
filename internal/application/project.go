@@ -12,20 +12,12 @@ import (
 )
 
 func listProjectSkills(command *cobra.Command, invocation Invocation) error {
-	if err := ensureNoInterruptedTransaction(invocation.WorkingDirectory); err != nil {
-		return err
-	}
-	collection, exists, err := projectSkillCollection(invocation.WorkingDirectory)
+	discovery, exists, err := discoverProjectSkills(invocation)
 	if err != nil {
 		return err
 	}
 	if !exists {
 		return printNoSkillsFound(command.OutOrStdout())
-	}
-
-	discovery, err := skill.DiscoverProject(collection)
-	if err != nil {
-		return fmt.Errorf("read Project Skills: %w", err)
 	}
 	for _, name := range discovery.Names {
 		if _, err := fmt.Fprintln(command.OutOrStdout(), name); err != nil {
@@ -40,6 +32,22 @@ func listProjectSkills(command *cobra.Command, invocation Invocation) error {
 	}
 
 	return nil
+}
+
+func discoverProjectSkills(invocation Invocation) (skill.ProjectDiscovery, bool, error) {
+	if err := ensureNoInterruptedTransaction(invocation.WorkingDirectory); err != nil {
+		return skill.ProjectDiscovery{}, false, err
+	}
+	collection, exists, err := projectSkillCollection(invocation.WorkingDirectory)
+	if err != nil || !exists {
+		return skill.ProjectDiscovery{}, exists, err
+	}
+	discovery, err := skill.DiscoverProject(collection)
+	if err != nil {
+		return skill.ProjectDiscovery{}, true, fmt.Errorf("read Project Skills: %w", err)
+	}
+
+	return discovery, true, nil
 }
 
 func editProjectSkill(command *cobra.Command, invocation Invocation, name string) error {

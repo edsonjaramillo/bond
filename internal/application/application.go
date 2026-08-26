@@ -113,9 +113,10 @@ func newSkillsCommand(invocation Invocation) *cobra.Command {
 
 func newSkillDraftCommand(invocation Invocation) *cobra.Command {
 	return &cobra.Command{
-		Use:   "new <stored-path>",
-		Short: "Create a Skill Draft",
-		Args:  cobra.ExactArgs(1),
+		Use:               "new <stored-path>",
+		Short:             "Create a Skill Draft",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeSkillDraftOrganizations(invocation),
 		RunE: func(command *cobra.Command, arguments []string) error {
 			return newSkillDraft(command, invocation, arguments[0])
 		},
@@ -126,9 +127,10 @@ func newAddCommand(invocation Invocation) *cobra.Command {
 	var copySkills bool
 
 	command := &cobra.Command{
-		Use:   "add <stored-path>...",
-		Short: "Install Stored Skills",
-		Args:  cobra.MinimumNArgs(1),
+		Use:               "add <stored-path>...",
+		Short:             "Install Stored Skills",
+		Args:              cobra.MinimumNArgs(1),
+		ValidArgsFunction: completeStoredSkills(invocation),
 		RunE: func(command *cobra.Command, arguments []string) error {
 			mode := linkMode
 			if copySkills {
@@ -145,9 +147,10 @@ func newAddCommand(invocation Invocation) *cobra.Command {
 
 func newRemoveCommand(invocation Invocation) *cobra.Command {
 	return &cobra.Command{
-		Use:   "remove <skill-name>...",
-		Short: "Remove Managed Skills",
-		Args:  cobra.MinimumNArgs(1),
+		Use:               "remove <skill-name>...",
+		Short:             "Remove Managed Skills",
+		Args:              cobra.MinimumNArgs(1),
+		ValidArgsFunction: completeManagedSkills(invocation),
 		RunE: func(command *cobra.Command, arguments []string) error {
 			return removeSkills(command, invocation, arguments)
 		},
@@ -167,9 +170,10 @@ func newClearCommand(invocation Invocation) *cobra.Command {
 
 func newEditCommand(invocation Invocation) *cobra.Command {
 	return &cobra.Command{
-		Use:   "edit <skill-name>",
-		Short: "Edit a Project Skill",
-		Args:  cobra.ExactArgs(1),
+		Use:               "edit <skill-name>",
+		Short:             "Edit a Project Skill",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeProjectSkills(invocation),
 		RunE: func(command *cobra.Command, arguments []string) error {
 			return editProjectSkill(command, invocation, arguments[0])
 		},
