@@ -273,6 +273,14 @@ func preflightSkills(invocation Invocation, arguments []string) ([]requestedInst
 			if ownedNames[request.path.Name] {
 				request.errors = append(request.errors, fmt.Sprintf("ownership for Project Skill %q already exists", request.path.Name))
 			}
+			destinationRelative := filepath.ToSlash(filepath.Join(".agents", "skills", request.path.Name))
+			for _, resourceRecord := range manifest.Resources {
+				for _, resourcePath := range resourceRecord.Paths {
+					if pathsOverlap(destinationRelative, resourcePath) {
+						request.errors = append(request.errors, fmt.Sprintf("destination for Project Skill %q overlaps path %q owned by Managed Resource %q", request.path.Name, resourcePath, resourceRecord.Name))
+					}
+				}
+			}
 			if skillsExists {
 				destination := filepath.Join(skillsDirectory, request.path.Name)
 				if _, err := os.Lstat(destination); err == nil {

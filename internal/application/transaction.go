@@ -71,16 +71,33 @@ func (lock *projectLock) release() error {
 }
 
 type addTransactionJournal struct {
-	Version                 int                  `json:"version"`
-	Operation               string               `json:"operation,omitempty"`
-	StageDirectory          string               `json:"stageDirectory"`
-	CreatedAgentsDirectory  bool                 `json:"createdAgentsDirectory"`
-	CreatedSkillsDirectory  bool                 `json:"createdSkillsDirectory"`
-	PreviousManifestExisted bool                 `json:"previousManifestExisted"`
-	PreviousManifest        projectManifest      `json:"previousManifest"`
-	NextManifest            projectManifest      `json:"nextManifest"`
-	Installations           []stagedInstallation `json:"installations"`
-	Removals                []stagedRemoval      `json:"removals,omitempty"`
+	Version                 int                        `json:"version"`
+	Operation               string                     `json:"operation,omitempty"`
+	StageDirectory          string                     `json:"stageDirectory"`
+	CreatedAgentsDirectory  bool                       `json:"createdAgentsDirectory"`
+	CreatedSkillsDirectory  bool                       `json:"createdSkillsDirectory"`
+	PreviousManifestExisted bool                       `json:"previousManifestExisted"`
+	PreviousManifest        projectManifest            `json:"previousManifest"`
+	NextManifest            projectManifest            `json:"nextManifest"`
+	Installations           []stagedInstallation       `json:"installations"`
+	Removals                []stagedRemoval            `json:"removals,omitempty"`
+	ResourceInstallations   []resourceJournalLeaf      `json:"resourceInstallations,omitempty"`
+	ResourceRemovals        []resourceJournalLeaf      `json:"resourceRemovals,omitempty"`
+	CreatedDirectories      []resourceJournalDirectory `json:"createdDirectories,omitempty"`
+}
+
+type resourceJournalLeaf struct {
+	Resource    string             `json:"resource"`
+	Source      string             `json:"source,omitempty"`
+	Destination string             `json:"destination"`
+	Identity    filesystemIdentity `json:"identity,omitempty"`
+	Present     bool               `json:"present,omitempty"`
+}
+
+type resourceJournalDirectory struct {
+	Destination string             `json:"destination"`
+	Mode        os.FileMode        `json:"mode"`
+	Identity    filesystemIdentity `json:"identity,omitempty"`
 }
 
 type stagedRemoval struct {
@@ -156,19 +173,21 @@ func readAddJournal(agentsDirectory string) (addTransactionJournal, bool, error)
 	} else if !os.IsNotExist(stageErr) {
 		return addTransactionJournal{}, false, fmt.Errorf("inspect Project transaction staging: %w", stageErr)
 	}
-	if journal.PreviousManifest.Version != manifestVersion || journal.PreviousManifest.Skills == nil || journal.NextManifest.Version != manifestVersion || journal.NextManifest.Skills == nil {
-		return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
-	}
-	if err := validateManifestRecords(journal.PreviousManifest.Skills); err != nil {
+	if err := validateJournalManifest(journal.PreviousManifest); err != nil {
 		return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt: invalid previous manifest: %w", err)
 	}
-	if err := validateManifestRecords(journal.NextManifest.Skills); err != nil {
+	if err := validateJournalManifest(journal.NextManifest); err != nil {
 		return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt: invalid next manifest: %w", err)
 	}
-	if journal.Operation != "" && journal.Operation != "remove" {
+	if journal.Operation != "" && journal.Operation != "remove" && journal.Operation != "resource-add" && journal.Operation != "resource-remove" {
 		return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
 	}
-	if journal.Operation == "remove" {
+	switch journal.Operation {
+	case "resource-add", "resource-remove":
+		if err := validateResourceJournal(journal); err != nil {
+			return addTransactionJournal{}, false, err
+		}
+	case "remove":
 		if len(journal.Installations) != 0 || len(journal.Removals) == 0 || journal.CreatedAgentsDirectory || journal.CreatedSkillsDirectory || !journal.PreviousManifestExisted {
 			return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
 		}
@@ -177,7 +196,7 @@ func readAddJournal(agentsDirectory string) (addTransactionJournal, bool, error)
 				return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
 			}
 		}
-	} else {
+	default:
 		if len(journal.Removals) != 0 {
 			return addTransactionJournal{}, false, fmt.Errorf("project transaction journal is corrupt")
 		}
@@ -232,6 +251,9 @@ func recoverInterruptedAdd(agentsDirectory string) error {
 	}
 	if journal.Operation == "remove" {
 		return recoverInterruptedRemove(agentsDirectory, journal, current, currentExists)
+	}
+	if journal.Operation == "resource-add" || journal.Operation == "resource-remove" {
+		return recoverInterruptedResourceTransaction(agentsDirectory, journal, current, currentExists)
 	}
 	if currentExists && reflect.DeepEqual(current, journal.NextManifest) {
 		if err := verifyPublishedInstallations(agentsDirectory, journal); err != nil {

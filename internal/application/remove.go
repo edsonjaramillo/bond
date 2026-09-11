@@ -215,7 +215,8 @@ func preflightRemovals(project string, arguments []string) ([]requestedRemoval, 
 	for _, request := range requests {
 		removed[request.argument] = true
 	}
-	nextManifest := emptyProjectManifest()
+	nextManifest := manifest
+	nextManifest.Skills = make([]managedSkillRecord, 0, len(manifest.Skills)-len(requests))
 	for _, record := range manifest.Skills {
 		if !removed[record.Name] {
 			nextManifest.Skills = append(nextManifest.Skills, record)

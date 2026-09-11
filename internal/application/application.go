@@ -25,6 +25,7 @@ type Invocation struct {
 	projectLockTimeout           time.Duration
 	transactionFailurePoint      string
 	transactionInterruptionPoint string
+	transactionHook              func(string) error
 }
 
 // Dependencies contains replaceable values supplied by the executable.
@@ -33,6 +34,7 @@ type Dependencies struct {
 	ProjectLockTimeout           time.Duration
 	TransactionFailurePoint      string
 	TransactionInterruptionPoint string
+	transactionHook              func(string) error
 }
 
 // Run executes one Bond invocation and returns its process exit code.
@@ -41,6 +43,7 @@ func Run(ctx context.Context, invocation Invocation, dependencies Dependencies) 
 	invocation.projectLockTimeout = dependencies.ProjectLockTimeout
 	invocation.transactionFailurePoint = dependencies.TransactionFailurePoint
 	invocation.transactionInterruptionPoint = dependencies.TransactionInterruptionPoint
+	invocation.transactionHook = dependencies.transactionHook
 	version := dependencies.Version
 	if version == "" {
 		version = Version
@@ -76,7 +79,7 @@ func withDefaultStreams(invocation Invocation) Invocation {
 func newRootCommand(invocation Invocation, version string) *cobra.Command {
 	root := &cobra.Command{
 		Use:           "bond",
-		Short:         "Manage reusable AI-agent skills",
+		Short:         "Manage reusable AI-agent skills and project resources",
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		Version:       version,
@@ -89,6 +92,7 @@ func newRootCommand(invocation Invocation, version string) *cobra.Command {
 	root.SetErr(invocation.Stderr)
 
 	root.AddCommand(newSkillsCommand(invocation))
+	root.AddCommand(newResourcesCommand(invocation))
 	root.AddCommand(newVersionCommand(version))
 
 	return root
@@ -109,6 +113,52 @@ func newSkillsCommand(invocation Invocation) *cobra.Command {
 	command.AddCommand(newEditCommand(invocation))
 
 	return command
+}
+
+func newResourcesCommand(invocation Invocation) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "resources",
+		Short: "Manage resources",
+		Args:  cobra.NoArgs,
+		RunE:  showHelp,
+	}
+	command.AddCommand(newResourceAddCommand(invocation))
+	command.AddCommand(newResourceRemoveCommand(invocation))
+
+	return command
+}
+
+func newResourceAddCommand(invocation Invocation) *cobra.Command {
+	var copyResources bool
+	command := &cobra.Command{
+		Use:               "add <resource>...",
+		Short:             "Install Stored Resources",
+		Args:              cobra.MinimumNArgs(1),
+		ValidArgsFunction: completeStoredResources(invocation),
+		RunE: func(command *cobra.Command, arguments []string) error {
+			mode := linkMode
+			if copyResources {
+				mode = copyMode
+			}
+
+			return addResources(command, invocation, arguments, mode)
+		},
+	}
+	command.Flags().BoolVar(&copyResources, "copy", false, "install independent copies")
+
+	return command
+}
+
+func newResourceRemoveCommand(invocation Invocation) *cobra.Command {
+	return &cobra.Command{
+		Use:               "remove <resource>...",
+		Short:             "Remove Managed Resources",
+		Args:              cobra.MinimumNArgs(1),
+		ValidArgsFunction: completeManagedResources(invocation),
+		RunE: func(command *cobra.Command, arguments []string) error {
+			return removeResources(command, invocation, arguments)
+		},
+	}
 }
 
 func newSkillDraftCommand(invocation Invocation) *cobra.Command {

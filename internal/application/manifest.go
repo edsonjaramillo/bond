@@ -11,11 +11,31 @@ import (
 	"github.com/edsonjaramillo/bond/internal/skill"
 )
 
-const manifestVersion = 1
+const (
+	manifestVersion1 = 1
+	manifestVersion2 = 2
+	manifestVersion  = manifestVersion1
+)
 
 type projectManifest struct {
-	Version int                  `json:"version"`
-	Skills  []managedSkillRecord `json:"skills"`
+	Version   int                     `json:"version"`
+	Skills    []managedSkillRecord    `json:"skills"`
+	Resources []managedResourceRecord `json:"resources,omitempty"`
+}
+
+func (manifest projectManifest) MarshalJSON() ([]byte, error) {
+	if manifest.Version == manifestVersion1 {
+		return json.Marshal(struct {
+			Version int                  `json:"version"`
+			Skills  []managedSkillRecord `json:"skills"`
+		}{Version: manifest.Version, Skills: manifest.Skills})
+	}
+
+	return json.Marshal(struct {
+		Version   int                     `json:"version"`
+		Skills    []managedSkillRecord    `json:"skills"`
+		Resources []managedResourceRecord `json:"resources"`
+	}{Version: manifest.Version, Skills: manifest.Skills, Resources: manifest.Resources})
 }
 
 type installationMode string
@@ -32,8 +52,14 @@ type managedSkillRecord struct {
 	Destination string           `json:"destination"`
 }
 
+type managedResourceRecord struct {
+	Name  string           `json:"name"`
+	Mode  installationMode `json:"mode"`
+	Paths []string         `json:"paths"`
+}
+
 func emptyProjectManifest() projectManifest {
-	return projectManifest{Version: manifestVersion, Skills: []managedSkillRecord{}}
+	return projectManifest{Version: manifestVersion1, Skills: []managedSkillRecord{}}
 }
 
 func readProjectManifest(agentsDirectory string) (projectManifest, error) {
@@ -65,13 +91,25 @@ func readProjectManifest(agentsDirectory string) (projectManifest, error) {
 	if err := ensureJSONEnd(decoder); err != nil {
 		return projectManifest{}, fmt.Errorf("project manifest is corrupt: %w", err)
 	}
-	if manifest.Version != manifestVersion {
+	if manifest.Version != manifestVersion1 && manifest.Version != manifestVersion2 {
 		return projectManifest{}, fmt.Errorf("project manifest version %d is unsupported", manifest.Version)
 	}
 	if manifest.Skills == nil {
 		return projectManifest{}, fmt.Errorf("project manifest is corrupt: skills must be an array")
 	}
+	if manifest.Version == manifestVersion1 && manifest.Resources != nil {
+		return projectManifest{}, fmt.Errorf("project manifest is corrupt: version 1 must not contain resources")
+	}
+	if manifest.Version == manifestVersion2 && manifest.Resources == nil {
+		return projectManifest{}, fmt.Errorf("project manifest is corrupt: version 2 resources must be an array")
+	}
 	if err := validateManifestRecords(manifest.Skills); err != nil {
+		return projectManifest{}, fmt.Errorf("project manifest is corrupt: %w", err)
+	}
+	if err := validateResourceManifestRecords(manifest.Resources); err != nil {
+		return projectManifest{}, fmt.Errorf("project manifest is corrupt: %w", err)
+	}
+	if err := validateCrossKindManifestRecords(manifest.Skills, manifest.Resources); err != nil {
 		return projectManifest{}, fmt.Errorf("project manifest is corrupt: %w", err)
 	}
 

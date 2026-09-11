@@ -1,6 +1,6 @@
 # Bond
 
-Bond manages reusable AI-agent skills in a central collection and installs them into individual projects.
+Bond manages reusable AI-agent skills and project resources in central collections and installs them into individual projects.
 
 ## Language
 
@@ -33,3 +33,22 @@ _Avoid_: Local skill
 **Managed Skill**:
 A Project Skill installed and tracked by Bond, and therefore eligible for removal by Bond.
 _Avoid_: Handled skill
+
+**Resource**:
+A named directory tree of reusable files whose paths are relative to a project root.
+_Avoid_: Asset, template
+
+**Resource Name**:
+The lowercase kebab-case basename of a Resource's directory. Resource Names are unique within both the Resource Store and a project.
+
+**Resource Store**:
+The central collection of Resources available for installation into projects.
+_Avoid_: Resource repository, resource registry
+
+**Stored Resource**:
+A Resource held in the Resource Store and identified there by name.
+_Avoid_: Global resource
+
+**Managed Resource**:
+A Stored Resource installed into a project as links or independent copies and tracked by Bond, and therefore eligible for removal by Bond.
+_Avoid_: Local resource, handled resource
