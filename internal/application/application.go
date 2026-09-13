@@ -93,6 +93,7 @@ func newRootCommand(invocation Invocation, version string) *cobra.Command {
 
 	root.AddCommand(newSkillsCommand(invocation))
 	root.AddCommand(newResourcesCommand(invocation))
+	root.AddCommand(newInstructionsCommand(invocation))
 	root.AddCommand(newVersionCommand(version))
 
 	return root
@@ -126,6 +127,29 @@ func newResourcesCommand(invocation Invocation) *cobra.Command {
 	command.AddCommand(newResourceRemoveCommand(invocation))
 
 	return command
+}
+
+func newInstructionsCommand(invocation Invocation) *cobra.Command {
+	command := &cobra.Command{
+		Use:   "instructions",
+		Short: "Manage Instructions",
+		Args:  cobra.NoArgs,
+		RunE:  showHelp,
+	}
+	command.AddCommand(newInstructionAppendCommand(invocation))
+
+	return command
+}
+
+func newInstructionAppendCommand(invocation Invocation) *cobra.Command {
+	return &cobra.Command{
+		Use:   "append <instruction-path>",
+		Short: "Append a Stored Instruction",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(command *cobra.Command, arguments []string) error {
+			return appendInstruction(command, invocation, arguments[0])
+		},
+	}
 }
 
 func newResourceAddCommand(invocation Invocation) *cobra.Command {
