@@ -25,7 +25,7 @@ const (
 )
 
 func appendInstruction(command *cobra.Command, invocation Invocation, instructionPath, targetPath string) error {
-	name, err := parseTopLevelInstructionPath(instructionPath)
+	components, err := parseInstructionPath(instructionPath)
 	if err != nil {
 		return err
 	}
@@ -39,7 +39,7 @@ func appendInstruction(command *cobra.Command, invocation Invocation, instructio
 	} else if !os.IsNotExist(resolveErr) {
 		return fmt.Errorf("resolve Instruction Store: %w", resolveErr)
 	}
-	contents, err := readInstruction(filepath.Join(store, name), instructionPath)
+	contents, err := readInstruction(store, components, instructionPath)
 	if err != nil {
 		return err
 	}
@@ -221,16 +221,26 @@ func pathsOverlapFold(first, second string) bool {
 	return pathsOverlap(strings.ToLower(first), strings.ToLower(second))
 }
 
-func parseTopLevelInstructionPath(path string) (string, error) {
-	if path == "" || filepath.IsAbs(path) || strings.Contains(path, "/") || strings.Contains(path, `\`) || filepath.Ext(path) != ".md" {
-		return "", fmt.Errorf("instruction Path %q must be a top-level lowercase kebab-case .md filename", path)
+func parseInstructionPath(path string) ([]string, error) {
+	invalid := func() ([]string, error) {
+		return nil, fmt.Errorf("invalid Instruction Path %q: must be name.md or group/name.md using lowercase kebab-case", path)
 	}
-	stem := strings.TrimSuffix(path, ".md")
-	if !validInstructionName(stem) {
-		return "", fmt.Errorf("instruction Path %q must be a top-level lowercase kebab-case .md filename", path)
+	if path == "" || filepath.IsAbs(path) || strings.Contains(path, `\`) {
+		return invalid()
+	}
+	components := strings.Split(path, "/")
+	if len(components) < 1 || len(components) > 2 {
+		return invalid()
+	}
+	filename := components[len(components)-1]
+	if !strings.HasSuffix(filename, ".md") || !validInstructionName(strings.TrimSuffix(filename, ".md")) {
+		return invalid()
+	}
+	if len(components) == 2 && !validInstructionName(components[0]) {
+		return invalid()
 	}
 
-	return path, nil
+	return components, nil
 }
 
 func validInstructionName(name string) bool {
@@ -246,25 +256,45 @@ func validInstructionName(name string) bool {
 	return true
 }
 
-func readInstruction(path, instructionPath string) ([]byte, error) {
-	info, err := os.Lstat(path)
+func readInstruction(store string, components []string, instructionPath string) ([]byte, error) {
+	rootFD, err := unix.Open(store, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
-		return nil, fmt.Errorf("inspect Instruction %q: %w", instructionPath, err)
+		return nil, fmt.Errorf("open Instruction Store for %q: %w", instructionPath, err)
 	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("instruction %q must be a non-symlinked regular file", instructionPath)
+	root := os.NewFile(uintptr(rootFD), store)
+	parent := root
+	if len(components) == 2 {
+		groupFD, openErr := unix.Openat(int(root.Fd()), components[0], unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if openErr != nil {
+			_ = root.Close()
+
+			return nil, fmt.Errorf("open Instruction grouping directory %q: %w", components[0], openErr)
+		}
+		group := os.NewFile(uintptr(groupFD), components[0])
+		if _, matchErr := matchingInstructionSourceEntry(group, root, components[0], "grouping directory", instructionPath); matchErr != nil {
+			_ = group.Close()
+			_ = root.Close()
+
+			return nil, matchErr
+		}
+		parent = group
+		defer func() { _ = group.Close() }()
 	}
-	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	defer func() { _ = root.Close() }()
+
+	filename := components[len(components)-1]
+	fileFD, err := unix.Openat(int(parent.Fd()), filename, unix.O_RDONLY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
 	if err != nil {
 		return nil, fmt.Errorf("open Instruction %q: %w", instructionPath, err)
 	}
-	openedInfo, statErr := file.Stat()
-	if statErr != nil {
+	file := os.NewFile(uintptr(fileFD), instructionPath)
+	opened, matchErr := matchingInstructionSourceEntry(file, parent, filename, "Instruction", instructionPath)
+	if matchErr != nil {
 		_ = file.Close()
 
-		return nil, fmt.Errorf("inspect opened Instruction %q: %w", instructionPath, statErr)
+		return nil, matchErr
 	}
-	if !openedInfo.Mode().IsRegular() {
+	if opened.Mode&unix.S_IFMT != unix.S_IFREG {
 		_ = file.Close()
 
 		return nil, fmt.Errorf("instruction %q must be a non-symlinked regular file", instructionPath)
@@ -288,6 +318,22 @@ func readInstruction(path, instructionPath string) ([]byte, error) {
 	}
 
 	return contents, nil
+}
+
+func matchingInstructionSourceEntry(file, parent *os.File, name, kind, instructionPath string) (unix.Stat_t, error) {
+	var opened unix.Stat_t
+	if err := unix.Fstat(int(file.Fd()), &opened); err != nil {
+		return unix.Stat_t{}, fmt.Errorf("inspect opened %s %q: %w", kind, instructionPath, err)
+	}
+	var current unix.Stat_t
+	if err := unix.Fstatat(int(parent.Fd()), name, &current, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return unix.Stat_t{}, fmt.Errorf("inspect %s %q: %w", kind, instructionPath, err)
+	}
+	if opened.Dev != current.Dev || opened.Ino != current.Ino || current.Mode&unix.S_IFMT == unix.S_IFLNK {
+		return unix.Stat_t{}, fmt.Errorf("%s %q changed during validation", strings.ToLower(kind), instructionPath)
+	}
+
+	return opened, nil
 }
 
 func openInstructionTarget(root *os.File, relative, path string, invocation Invocation) (*os.File, *os.File, string, bool, error) {

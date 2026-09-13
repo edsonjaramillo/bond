@@ -1,6 +1,6 @@
 # Bond
 
-Bond manages reusable AI-agent skills and project resources in central collections and installs them into individual projects.
+Bond manages reusable AI-agent Skills, Resources, and Instructions in central collections and applies them to individual projects.
 
 ## Language
 
@@ -42,7 +42,7 @@ The central collection of Instructions available for appending to target documen
 _Avoid_: Instruction repository, instruction registry
 
 **Instruction Path**:
-An Instruction's Store-relative identifier, consisting of its filename and optionally one grouping directory.
+An Instruction's Instruction Store-relative identifier in the form `name.md` or `group/name.md`. The optional grouping directory and filename stem use lowercase kebab-case, and the extension is exactly `.md`.
 
 **Resource**:
 A named directory tree of reusable files whose paths are relative to a project root.

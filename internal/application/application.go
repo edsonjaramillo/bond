@@ -144,9 +144,10 @@ func newInstructionsCommand(invocation Invocation) *cobra.Command {
 func newInstructionAppendCommand(invocation Invocation) *cobra.Command {
 	target := "AGENTS.md"
 	command := &cobra.Command{
-		Use:   "append <instruction-path>",
-		Short: "Append a Stored Instruction",
-		Args:  cobra.ExactArgs(1),
+		Use:               "append <instruction-path>",
+		Short:             "Append an Instruction from the Instruction Store",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeInstructionPaths(invocation),
 		RunE: func(command *cobra.Command, arguments []string) error {
 			return appendInstruction(command, invocation, arguments[0], target)
 		},

@@ -47,6 +47,24 @@ func TestInstructionsAppendCreatesDefaultTargetFromTopLevelInstruction(t *testin
 	}
 }
 
+func TestInstructionsAppendSupportsGroupedInstructionPaths(t *testing.T) {
+	project := t.TempDir()
+	configDirectory := t.TempDir()
+	writeInstructionForTest(t, configDirectory, "quality/format-lint.md", []byte("Run grouped checks."))
+
+	got := runApplicationInDirectory(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "instructions", "append", "quality/format-lint.md")
+	if got.exitCode != 0 || got.stdout != "" || got.stderr != "" {
+		t.Fatalf("result = exit %d, stdout %q, stderr %q; want silent success", got.exitCode, got.stdout, got.stderr)
+	}
+	contents, err := os.ReadFile(filepath.Join(project, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != "Run grouped checks.\n" {
+		t.Errorf("AGENTS.md = %q, want grouped Instruction content", contents)
+	}
+}
+
 func TestInstructionsAppendSupportsCustomTargets(t *testing.T) {
 	for _, test := range []struct {
 		name       string
@@ -368,7 +386,12 @@ func TestInstructionsAppendRequiresExactlyOneInstructionPath(t *testing.T) {
 func TestInstructionsAppendRejectsInvalidOrMissingSourcesWithoutCreatingFiles(t *testing.T) {
 	t.Parallel()
 
-	for _, instructionPath := range []string{"", "Format.md", "format_lint.md", "format-lint", "../format-lint.md", "group/format-lint.md", "format--lint.md"} {
+	for _, instructionPath := range []string{
+		"", "Format.md", "format_lint.md", "format-lint", "format.MD", "../format-lint.md",
+		"/format-lint.md", "./format-lint.md", "group/../format-lint.md", "group//format-lint.md",
+		"group/subgroup/format-lint.md", "Group/format-lint.md", "group_name/format-lint.md",
+		"group/Format.md", "group/format_lint.md", "group/format--lint.md", "format--lint.md",
+	} {
 		if instructionPath == "" {
 			continue // ExactArgs covers the empty positional case.
 		}
@@ -444,6 +467,123 @@ func TestInstructionsAppendValidatesInstructionContentAndIdentity(t *testing.T) 
 				t.Errorf("invalid Instruction created target; Lstat error = %v", err)
 			}
 		})
+	}
+}
+
+func TestInstructionsAppendSupportsSymlinkedInstructionStoreRootAndRejectsEntrySymlinks(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		instruction string
+		setup       func(t *testing.T, configuredStore, realStore string)
+		wantSuccess bool
+	}{
+		{
+			name:        "symlinked Instruction Store root",
+			instruction: "quality/check.md",
+			setup: func(t *testing.T, configuredStore, realStore string) {
+				if err := os.MkdirAll(filepath.Join(realStore, "quality"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(realStore, "quality", "check.md"), []byte("instruction"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(filepath.Dir(configuredStore), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(realStore, configuredStore); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantSuccess: true,
+		},
+		{
+			name:        "symlinked grouping directory",
+			instruction: "quality/check.md",
+			setup: func(t *testing.T, configuredStore, realStore string) {
+				outside := t.TempDir()
+				if err := os.WriteFile(filepath.Join(outside, "check.md"), []byte("instruction"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(configuredStore, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, filepath.Join(configuredStore, "quality")); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name:        "symlinked grouped Instruction",
+			instruction: "quality/check.md",
+			setup: func(t *testing.T, configuredStore, realStore string) {
+				if err := os.MkdirAll(filepath.Join(configuredStore, "quality"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				real := filepath.Join(realStore, "check.md")
+				if err := os.MkdirAll(realStore, 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(real, []byte("instruction"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(real, filepath.Join(configuredStore, "quality", "check.md")); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project := t.TempDir()
+			configDirectory := t.TempDir()
+			configuredStore := filepath.Join(configDirectory, "bond", "instructions")
+			test.setup(t, configuredStore, t.TempDir())
+
+			got := runApplicationInDirectory(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "instructions", "append", test.instruction)
+			if test.wantSuccess {
+				if got.exitCode != 0 || got.stdout != "" || got.stderr != "" {
+					t.Fatalf("result = exit %d, stdout %q, stderr %q; want silent success", got.exitCode, got.stdout, got.stderr)
+				}
+				return
+			}
+			if got.exitCode != 1 || got.stdout != "" || got.stderr == "" {
+				t.Errorf("result = exit %d, stdout %q, stderr %q; want entry symlink rejection", got.exitCode, got.stdout, got.stderr)
+			}
+			if _, err := os.Lstat(filepath.Join(project, "AGENTS.md")); !os.IsNotExist(err) {
+				t.Errorf("rejected Instruction created target; Lstat error = %v", err)
+			}
+		})
+	}
+}
+
+func TestInstructionPathCompletionReturnsOnlySafeSupportedEntries(t *testing.T) {
+	project := t.TempDir()
+	configDirectory := t.TempDir()
+	store := filepath.Join(configDirectory, "bond", "instructions")
+	writeInstructionForTest(t, configDirectory, "alpha.md", []byte("alpha"))
+	writeInstructionForTest(t, configDirectory, "quality/format-lint.md", []byte("checks"))
+	writeInstructionForTest(t, configDirectory, "quality/deeper/ignored.md", []byte("ignored"))
+	writeInstructionForTest(t, configDirectory, "quality/not-markdown.txt", []byte("ignored"))
+	writeInstructionForTest(t, configDirectory, "Bad.md", []byte("ignored"))
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "linked.md"), []byte("ignored"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "linked.md"), filepath.Join(store, "linked.md")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(store, "linked-group")); err != nil {
+		t.Fatal(err)
+	}
+
+	got := runApplicationInDirectory(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "__complete", "instructions", "append", "")
+	if got.exitCode != 0 {
+		t.Fatalf("exit code = %d, want 0; stderr = %q", got.exitCode, got.stderr)
+	}
+	if got.stdout != "alpha.md\nquality/format-lint.md\n:4\n" {
+		t.Errorf("stdout = %q, want valid top-level and grouped Instruction Paths", got.stdout)
+	}
+	if strings.Contains(got.stderr, "Error:") {
+		t.Errorf("stderr = %q, want no completion diagnostic", got.stderr)
 	}
 }
 
@@ -714,11 +854,11 @@ func TestInstructionsAppendRollsBackOrdinaryFailures(t *testing.T) {
 func writeInstructionForTest(t *testing.T, configDirectory, name string, contents []byte) {
 	t.Helper()
 
-	store := filepath.Join(configDirectory, "bond", "instructions")
-	if err := os.MkdirAll(store, 0o755); err != nil {
+	path := filepath.Join(configDirectory, "bond", "instructions", filepath.FromSlash(name))
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(store, name), contents, 0o644); err != nil {
+	if err := os.WriteFile(path, contents, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
