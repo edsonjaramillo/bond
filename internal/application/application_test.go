@@ -376,7 +376,7 @@ func TestStoreUsesPlatformUserConfigurationDirectoryWithoutXDG(t *testing.T) {
 	}
 	writeSkill(t, filepath.Join(configDirectory, "bond", "skills", "review"), "review", "Review changes")
 
-	got := runApplicationWithEnvironment(t, []string{"HOME=" + home}, "skills", "list", "--store")
+	got := runApplicationWithEnvironment(t, []string{"XDG_CONFIG_HOME=", "HOME=" + home}, "skills", "list", "--store")
 
 	if got.exitCode != 0 {
 		t.Fatalf("exit code = %d, want 0; stderr = %q", got.exitCode, got.stderr)
@@ -386,6 +386,29 @@ func TestStoreUsesPlatformUserConfigurationDirectoryWithoutXDG(t *testing.T) {
 	}
 	if got.stderr != "" {
 		t.Errorf("stderr = %q, want empty", got.stderr)
+	}
+}
+
+func TestCentralCollectionsRequireHomeWithoutXDG(t *testing.T) {
+	t.Parallel()
+
+	for _, test := range []struct {
+		name       string
+		arguments  []string
+		wantStderr string
+	}{
+		{name: "Skill Store", arguments: []string{"skills", "list", "--store"}, wantStderr: "resolve Store: HOME is not set\n"},
+		{name: "Resource Store", arguments: []string{"resources", "add", "editor-config"}, wantStderr: "editor-config: resolve Resource Store: HOME is not set\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := runApplicationInDirectory(t, t.TempDir(), []string{"XDG_CONFIG_HOME="}, "", test.arguments...)
+
+			if got.exitCode != 1 || got.stdout != "" || got.stderr != test.wantStderr {
+				t.Errorf("exit code = %d, stdout = %q, stderr = %q; want exit 1 and stderr %q", got.exitCode, got.stdout, got.stderr, test.wantStderr)
+			}
+		})
 	}
 }
 

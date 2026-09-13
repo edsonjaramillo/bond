@@ -34,6 +34,16 @@ _Avoid_: Local skill
 A Project Skill installed and tracked by Bond, and therefore eligible for removal by Bond.
 _Avoid_: Handled skill
 
+**Instruction**:
+A reusable Markdown document held in the Instruction Store and appended to a target document.
+
+**Instruction Store**:
+The central collection of Instructions available for appending to target documents.
+_Avoid_: Instruction repository, instruction registry
+
+**Instruction Path**:
+An Instruction's Store-relative identifier, consisting of its filename and optionally one grouping directory.
+
 **Resource**:
 A named directory tree of reusable files whose paths are relative to a project root.
 _Avoid_: Asset, template

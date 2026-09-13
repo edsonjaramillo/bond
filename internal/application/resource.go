@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 
@@ -28,19 +27,7 @@ type storedResource struct {
 }
 
 func resourceStorePath(environment []string) (string, error) {
-	if directory, ok := environmentValue(environment, "XDG_CONFIG_HOME"); ok && directory != "" {
-		return filepath.Join(directory, "bond", "resources"), nil
-	}
-	home, ok := environmentValue(environment, "HOME")
-	if !ok || home == "" {
-		return "", fmt.Errorf("resolve Resource Store: HOME is not set")
-	}
-	configurationDirectory := filepath.Join(home, ".config")
-	if runtime.GOOS == "darwin" {
-		configurationDirectory = filepath.Join(home, "Library", "Application Support")
-	}
-
-	return filepath.Join(configurationDirectory, "bond", "resources"), nil
+	return centralCollectionPath(environment, resourceCollection)
 }
 
 func validResourceName(name string) bool {

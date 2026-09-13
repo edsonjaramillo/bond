@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -38,6 +39,38 @@ func TestBareResourcesPrintsHelp(t *testing.T) {
 	got := runApplication(t, "resources")
 	if got.exitCode != 0 || !strings.Contains(got.stdout, "Usage:\n  bond resources") || got.stderr != "" {
 		t.Fatalf("exit = %d, stdout = %q, stderr = %q", got.exitCode, got.stdout, got.stderr)
+	}
+}
+
+func TestResourceStoreUsesPlatformUserConfigurationDirectoryWithoutXDG(t *testing.T) {
+	t.Parallel()
+
+	project := t.TempDir()
+	home := t.TempDir()
+	configDirectory := filepath.Join(home, ".config")
+	if runtime.GOOS == "darwin" {
+		configDirectory = filepath.Join(home, "Library", "Application Support")
+	}
+	store := filepath.Join(configDirectory, "bond", "resources")
+	writeStoredResourceFile(t, store, "editor-config", ".editorconfig", "root = true\n", 0o644)
+
+	got := runApplicationInDirectory(
+		t,
+		project,
+		[]string{"XDG_CONFIG_HOME=", "HOME=" + home},
+		"",
+		"resources", "add", "editor-config", "--copy",
+	)
+
+	if got.exitCode != 0 || got.stdout != "" || got.stderr != "" {
+		t.Fatalf("exit = %d, stdout = %q, stderr = %q", got.exitCode, got.stdout, got.stderr)
+	}
+	contents, err := os.ReadFile(filepath.Join(project, ".editorconfig"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != "root = true\n" {
+		t.Errorf("contents = %q, want %q", contents, "root = true\n")
 	}
 }
 

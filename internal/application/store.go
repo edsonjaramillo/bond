@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/edsonjaramillo/bond/internal/skill"
@@ -48,21 +46,7 @@ func printNoSkillsFound(writer io.Writer) error {
 }
 
 func storePath(environment []string) (string, error) {
-	if directory, ok := environmentValue(environment, "XDG_CONFIG_HOME"); ok && directory != "" {
-		return filepath.Join(directory, "bond", "skills"), nil
-	}
-
-	home, ok := environmentValue(environment, "HOME")
-	if !ok || home == "" {
-		return "", fmt.Errorf("resolve Store: HOME is not set")
-	}
-
-	configurationDirectory := filepath.Join(home, ".config")
-	if runtime.GOOS == "darwin" {
-		configurationDirectory = filepath.Join(home, "Library", "Application Support")
-	}
-
-	return filepath.Join(configurationDirectory, "bond", "skills"), nil
+	return centralCollectionPath(environment, skillCollection)
 }
 
 func environmentValue(environment []string, name string) (string, bool) {
