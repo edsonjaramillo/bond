@@ -14,14 +14,17 @@ import (
 	"unicode/utf8"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/sys/unix"
 )
 
 const (
-	instructionAfterWrite = "instruction-after-write"
-	instructionBeforeSync = "instruction-before-sync"
+	instructionAfterPreflight  = "instruction-after-preflight"
+	instructionAfterParentOpen = "instruction-after-parent-open"
+	instructionAfterWrite      = "instruction-after-write"
+	instructionBeforeSync      = "instruction-before-sync"
 )
 
-func appendInstruction(command *cobra.Command, invocation Invocation, instructionPath string) error {
+func appendInstruction(command *cobra.Command, invocation Invocation, instructionPath, targetPath string) error {
 	name, err := parseTopLevelInstructionPath(instructionPath)
 	if err != nil {
 		return err
@@ -30,13 +33,33 @@ func appendInstruction(command *cobra.Command, invocation Invocation, instructio
 	if err != nil {
 		return err
 	}
+	resolvedStore, resolveErr := filepath.EvalSymlinks(store)
+	if resolveErr == nil {
+		store = resolvedStore
+	} else if !os.IsNotExist(resolveErr) {
+		return fmt.Errorf("resolve Instruction Store: %w", resolveErr)
+	}
 	contents, err := readInstruction(filepath.Join(store, name), instructionPath)
 	if err != nil {
 		return err
 	}
 
-	targetPath := filepath.Join(invocation.WorkingDirectory, "AGENTS.md")
-	target, created, err := openInstructionTarget(targetPath)
+	projectRoot, projectPath, err := openInstructionProject(invocation.WorkingDirectory)
+	if err != nil {
+		return err
+	}
+	targetRelative, targetPath, err := validateInstructionTarget(projectPath, targetPath, store)
+	if err != nil {
+		_ = projectRoot.Close()
+
+		return err
+	}
+	if err := instructionFailure(invocation, instructionAfterPreflight); err != nil {
+		_ = projectRoot.Close()
+
+		return fmt.Errorf("validate target %q: %w", targetPath, err)
+	}
+	target, parent, targetName, created, err := openInstructionTarget(projectRoot, targetRelative, targetPath, invocation)
 	if err != nil {
 		return err
 	}
@@ -44,12 +67,12 @@ func appendInstruction(command *cobra.Command, invocation Invocation, instructio
 	rollbackInstructionAppend := func(operationErr error, originalLength int64, mutated bool) error {
 		var rollbackErr error
 		if created {
-			// Unlink while the lock is still held. A cooperative waiter will then
-			// reject the stale descriptor after it acquires the lock.
-			if removeErr := os.Remove(targetPath); removeErr != nil && !os.IsNotExist(removeErr) {
-				rollbackErr = errors.Join(rollbackErr, fmt.Errorf("remove newly created target %q: %w", targetPath, removeErr))
+			// Unlink through the verified parent descriptor while the lock is held.
+			// A cooperative waiter then rejects its stale target descriptor.
+			if removeErr := removeCreatedInstructionTarget(target, parent, targetName, targetPath); removeErr != nil && !errors.Is(removeErr, unix.ENOENT) {
+				rollbackErr = errors.Join(rollbackErr, removeErr)
 			} else if removeErr == nil {
-				rollbackErr = errors.Join(rollbackErr, syncDirectory(filepath.Dir(targetPath)))
+				rollbackErr = errors.Join(rollbackErr, parent.Sync())
 			}
 			if locked {
 				rollbackErr = errors.Join(rollbackErr, releaseInstructionTargetLock(target))
@@ -73,6 +96,8 @@ func appendInstruction(command *cobra.Command, invocation Invocation, instructio
 			}
 		}
 
+		rollbackErr = errors.Join(rollbackErr, parent.Close())
+
 		return errors.Join(operationErr, rollbackErr)
 	}
 
@@ -81,7 +106,7 @@ func appendInstruction(command *cobra.Command, invocation Invocation, instructio
 	}
 	locked = true
 
-	existing, err := validateAndReadInstructionTarget(target, targetPath)
+	existing, err := validateAndReadInstructionTarget(target, parent, targetName, targetPath)
 	if err != nil {
 		return rollbackInstructionAppend(err, 0, false)
 	}
@@ -107,8 +132,93 @@ func appendInstruction(command *cobra.Command, invocation Invocation, instructio
 		return err
 	}
 	locked = false
+	if err := parent.Close(); err != nil {
+		return fmt.Errorf("close target parent: %w", err)
+	}
 
 	return nil
+}
+
+func openInstructionProject(project string) (*os.File, string, error) {
+	projectPath, err := filepath.EvalSymlinks(project)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve invocation directory: %w", err)
+	}
+	projectPath, err = filepath.Abs(projectPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve invocation directory: %w", err)
+	}
+	root, err := os.Open(projectPath)
+	if err != nil {
+		return nil, "", fmt.Errorf("open invocation directory: %w", err)
+	}
+	info, err := root.Stat()
+	if err != nil {
+		_ = root.Close()
+
+		return nil, "", fmt.Errorf("inspect invocation directory: %w", err)
+	}
+	if !info.IsDir() {
+		_ = root.Close()
+
+		return nil, "", fmt.Errorf("invocation directory must be a directory")
+	}
+
+	return root, projectPath, nil
+}
+
+func validateInstructionTarget(projectPath, target, store string) (string, string, error) {
+	if target == "" || filepath.IsAbs(target) {
+		return "", "", fmt.Errorf("target %q must be a relative path beneath the invocation directory", target)
+	}
+	cleaned := filepath.Clean(target)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("target %q must be a relative path beneath the invocation directory", target)
+	}
+	portable := filepath.ToSlash(cleaned)
+	foldedPortable := strings.ToLower(portable)
+	if foldedPortable == ".agents" || strings.HasPrefix(foldedPortable, ".agents/") {
+		return "", "", fmt.Errorf("target %q must not be beneath Bond project infrastructure", target)
+	}
+	targetPath := filepath.Join(projectPath, cleaned)
+	storePath, err := filepath.Abs(store)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve Instruction Store: %w", err)
+	}
+	if pathWithinFold(targetPath, storePath) {
+		return "", "", fmt.Errorf("target %q must not be inside the Instruction Store", target)
+	}
+
+	// This ownership check intentionally does not acquire the Project mutation
+	// lock. It fails closed for an existing invalid manifest, but remains
+	// best-effort with respect to concurrent Resource mutation.
+	manifest, err := readProjectManifest(filepath.Join(projectPath, ".agents"))
+	if err != nil {
+		return "", "", err
+	}
+	for _, resource := range manifest.Resources {
+		for _, ownedPath := range resource.Paths {
+			if pathsOverlapFold(portable, ownedPath) {
+				return "", "", fmt.Errorf("target %q overlaps path %q owned by Managed Resource %q", target, ownedPath, resource.Name)
+			}
+		}
+	}
+
+	return cleaned, targetPath, nil
+}
+
+func pathWithinFold(path, root string) bool {
+	relative, err := filepath.Rel(strings.ToLower(root), strings.ToLower(path))
+	if err != nil {
+		return false
+	}
+	folded := strings.ToLower(relative)
+
+	return folded != ".." && !strings.HasPrefix(folded, ".."+string(filepath.Separator))
+}
+
+func pathsOverlapFold(first, second string) bool {
+	return pathsOverlap(strings.ToLower(first), strings.ToLower(second))
 }
 
 func parseTopLevelInstructionPath(path string) (string, error) {
@@ -180,47 +290,120 @@ func readInstruction(path, instructionPath string) ([]byte, error) {
 	return contents, nil
 }
 
-func openInstructionTarget(path string) (*os.File, bool, error) {
-	info, err := os.Lstat(path)
-	if os.IsNotExist(err) {
-		file, createErr := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_EXCL|syscall.O_NOFOLLOW, 0o644)
-		if createErr != nil {
-			return nil, false, fmt.Errorf("create target %q: %w", path, createErr)
+func openInstructionTarget(root *os.File, relative, path string, invocation Invocation) (*os.File, *os.File, string, bool, error) {
+	components := strings.Split(relative, string(filepath.Separator))
+	directories := []*os.File{root}
+	for _, component := range components[:len(components)-1] {
+		parent := directories[len(directories)-1]
+		fd, openErr := unix.Openat(int(parent.Fd()), component, unix.O_RDONLY|unix.O_DIRECTORY|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+		if openErr != nil {
+			_ = closeInstructionDirectories(directories)
+
+			return nil, nil, "", false, fmt.Errorf("open target parent for %q: %w", path, openErr)
 		}
+		directories = append(directories, os.NewFile(uintptr(fd), component))
+	}
+	if err := instructionFailure(invocation, instructionAfterParentOpen); err != nil {
+		_ = closeInstructionDirectories(directories)
 
-		return file, true, nil
+		return nil, nil, "", false, fmt.Errorf("validate target parent for %q: %w", path, err)
+	}
+	for index := 1; index < len(directories); index++ {
+		if err := validateInstructionDirectoryEntry(directories[index-1], directories[index], components[index-1], path); err != nil {
+			_ = closeInstructionDirectories(directories)
+
+			return nil, nil, "", false, err
+		}
+	}
+
+	parent := directories[len(directories)-1]
+	name := components[len(components)-1]
+	fd, err := unix.Openat(int(parent.Fd()), name, unix.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
+	created := false
+	if errors.Is(err, unix.ENOENT) {
+		fd, err = unix.Openat(int(parent.Fd()), name, unix.O_RDWR|unix.O_CREAT|unix.O_EXCL|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0o644)
+		created = err == nil
 	}
 	if err != nil {
-		return nil, false, fmt.Errorf("inspect target %q: %w", path, err)
+		_ = closeInstructionDirectories(directories)
+
+		return nil, nil, "", false, fmt.Errorf("open target %q: %w", path, err)
 	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return nil, false, fmt.Errorf("target %q must not be a symlink", path)
+	target := os.NewFile(uintptr(fd), path)
+	for index := 1; index < len(directories); index++ {
+		if validateErr := validateInstructionDirectoryEntry(directories[index-1], directories[index], components[index-1], path); validateErr != nil {
+			if created {
+				_ = removeCreatedInstructionTarget(target, parent, name, path)
+			}
+			_ = target.Close()
+			_ = closeInstructionDirectories(directories)
+
+			return nil, nil, "", false, validateErr
+		}
 	}
-	file, err := os.OpenFile(path, os.O_RDWR|syscall.O_NOFOLLOW, 0)
-	if err != nil {
-		return nil, false, fmt.Errorf("open target %q: %w", path, err)
+	for _, directory := range directories[:len(directories)-1] {
+		if closeErr := directory.Close(); closeErr != nil {
+			_ = target.Close()
+			_ = parent.Close()
+
+			return nil, nil, "", false, fmt.Errorf("close target ancestor: %w", closeErr)
+		}
 	}
 
-	return file, false, nil
+	return target, parent, name, created, nil
 }
 
-func validateAndReadInstructionTarget(file *os.File, path string) ([]byte, error) {
-	info, err := file.Stat()
+func validateInstructionDirectoryEntry(parent, child *os.File, name, targetPath string) error {
+	_, err := matchingInstructionEntry(child, parent, name, "target parent", targetPath)
+
+	return err
+}
+
+func matchingInstructionEntry(file, parent *os.File, name, kind, targetPath string) (unix.Stat_t, error) {
+	var opened unix.Stat_t
+	if err := unix.Fstat(int(file.Fd()), &opened); err != nil {
+		return unix.Stat_t{}, fmt.Errorf("inspect %s for %q: %w", kind, targetPath, err)
+	}
+	var current unix.Stat_t
+	if err := unix.Fstatat(int(parent.Fd()), name, &current, unix.AT_SYMLINK_NOFOLLOW); err != nil {
+		return unix.Stat_t{}, fmt.Errorf("inspect %s for %q: %w", kind, targetPath, err)
+	}
+	if opened.Dev != current.Dev || opened.Ino != current.Ino || current.Mode&unix.S_IFMT == unix.S_IFLNK {
+		return unix.Stat_t{}, fmt.Errorf("%s for %q changed during validation", kind, targetPath)
+	}
+
+	return opened, nil
+}
+
+func removeCreatedInstructionTarget(file, parent *os.File, name, path string) error {
+	if _, err := matchingInstructionEntry(file, parent, name, "newly created target", path); err != nil {
+		return err
+	}
+	if err := unix.Unlinkat(int(parent.Fd()), name, 0); err != nil {
+		return fmt.Errorf("remove newly created target %q: %w", path, err)
+	}
+
+	return nil
+}
+
+func closeInstructionDirectories(directories []*os.File) error {
+	var result error
+	for _, directory := range directories {
+		result = errors.Join(result, directory.Close())
+	}
+
+	return result
+}
+
+func validateAndReadInstructionTarget(file, parent *os.File, name, path string) ([]byte, error) {
+	opened, err := matchingInstructionEntry(file, parent, name, "locked target", path)
 	if err != nil {
-		return nil, fmt.Errorf("inspect target %q: %w", path, err)
+		return nil, err
 	}
-	pathInfo, err := os.Lstat(path)
-	if err != nil {
-		return nil, fmt.Errorf("inspect locked target %q: %w", path, err)
-	}
-	if pathInfo.Mode()&os.ModeSymlink != 0 || !os.SameFile(info, pathInfo) {
-		return nil, fmt.Errorf("target %q changed while waiting for its lock", path)
-	}
-	if !info.Mode().IsRegular() {
+	if opened.Mode&unix.S_IFMT != unix.S_IFREG {
 		return nil, fmt.Errorf("target %q must be a regular file", path)
 	}
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || stat.Nlink != 1 {
+	if opened.Nlink != 1 {
 		return nil, fmt.Errorf("target %q must have exactly one filesystem link", path)
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {

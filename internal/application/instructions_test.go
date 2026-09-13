@@ -3,6 +3,8 @@ package application
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -42,6 +44,289 @@ func TestInstructionsAppendCreatesDefaultTargetFromTopLevelInstruction(t *testin
 	}
 	if gotMode := info.Mode().Perm(); gotMode != 0o644 {
 		t.Errorf("AGENTS.md mode = %04o, want 0644", gotMode)
+	}
+}
+
+func TestInstructionsAppendSupportsCustomTargets(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		flag       string
+		target     string
+		wantTarget string
+	}{
+		{name: "short flag and arbitrary extension", flag: "-t", target: "notes.txt", wantTarget: "notes.txt"},
+		{name: "long flag and nested target", flag: "--target", target: "docs/guides/AGENT", wantTarget: "docs/guides/AGENT"},
+		{name: "cleaned dot segments", flag: "--target", target: "./docs/../AGENT", wantTarget: "AGENT"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(project, "docs", "guides"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			configDirectory := t.TempDir()
+			writeInstructionForTest(t, configDirectory, "check.md", []byte("instruction"))
+
+			got := runApplicationInDirectory(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "instructions", "append", "check.md", test.flag, test.target)
+			if got.exitCode != 0 || got.stdout != "" || got.stderr != "" {
+				t.Fatalf("result = exit %d, stdout %q, stderr %q; want silent success", got.exitCode, got.stdout, got.stderr)
+			}
+			contents, err := os.ReadFile(filepath.Join(project, filepath.FromSlash(test.wantTarget)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(contents) != "instruction\n" {
+				t.Errorf("target = %q, want appended Instruction", contents)
+			}
+		})
+	}
+}
+
+func TestInstructionsAppendRejectsUnsafeCustomTargetPaths(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		target func(project, config string) string
+		setup  func(*testing.T, string, string)
+	}{
+		{name: "absolute", target: func(_ string, _ string) string { return filepath.Join(t.TempDir(), "outside.md") }},
+		{name: "traversal", target: func(_ string, _ string) string { return "../outside.md" }},
+		{name: "missing parent", target: func(_ string, _ string) string { return "missing/target.md" }},
+		{name: "Bond infrastructure", target: func(_ string, _ string) string { return ".agents/notes.md" }, setup: func(t *testing.T, project, _ string) {
+			if err := os.Mkdir(filepath.Join(project, ".agents"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "case-insensitive Bond infrastructure alias", target: func(_ string, _ string) string { return ".AGENTS/notes.md" }, setup: func(t *testing.T, project, _ string) {
+			if err := os.Mkdir(filepath.Join(project, ".AGENTS"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "Instruction Store", target: func(project, _ string) string { return "config/bond/instructions/target.md" }, setup: func(t *testing.T, project, _ string) {
+			if err := os.MkdirAll(filepath.Join(project, "config", "bond", "instructions"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "Instruction Store case alias", target: func(project, _ string) string { return "CONFIG/BOND/INSTRUCTIONS/target.md" }, setup: func(t *testing.T, project, _ string) {
+			if err := os.MkdirAll(filepath.Join(project, "CONFIG", "BOND", "INSTRUCTIONS"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "symlinked parent", target: func(_ string, _ string) string { return "linked/target.md" }, setup: func(t *testing.T, project, _ string) {
+			if err := os.Symlink(t.TempDir(), filepath.Join(project, "linked")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "symlinked target", target: func(_ string, _ string) string { return "target.md" }, setup: func(t *testing.T, project, _ string) {
+			if err := os.Symlink(filepath.Join(t.TempDir(), "outside.md"), filepath.Join(project, "target.md")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "hard-linked target", target: func(_ string, _ string) string { return "target.md" }, setup: func(t *testing.T, project, _ string) {
+			real := filepath.Join(project, "real.md")
+			if err := os.WriteFile(real, []byte("original"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Link(real, filepath.Join(project, "target.md")); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "directory target", target: func(_ string, _ string) string { return "target.md" }, setup: func(t *testing.T, project, _ string) {
+			if err := os.Mkdir(filepath.Join(project, "target.md"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "pipe target", target: func(_ string, _ string) string { return "target.md" }, setup: func(t *testing.T, project, _ string) {
+			if err := syscall.Mkfifo(filepath.Join(project, "target.md"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "socket target", target: func(_ string, _ string) string { return "target.md" }, setup: func(t *testing.T, project, _ string) {
+			listener, err := net.Listen("unix", filepath.Join(project, "target.md"))
+			if err != nil {
+				t.Skipf("Unix socket target is not practical in this temporary directory: %v", err)
+			}
+			t.Cleanup(func() { _ = listener.Close() })
+		}},
+		{name: "invalid UTF-8 target", target: func(_ string, _ string) string { return "target.md" }, setup: func(t *testing.T, project, _ string) {
+			if err := os.WriteFile(filepath.Join(project, "target.md"), []byte{0xff}, 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			project := t.TempDir()
+			configDirectory := t.TempDir()
+			environment := []string{"XDG_CONFIG_HOME=" + configDirectory}
+			if strings.HasPrefix(test.name, "Instruction Store") {
+				configDirectory = filepath.Join(project, "config")
+				environment = []string{"XDG_CONFIG_HOME=" + configDirectory}
+			}
+			writeInstructionForTest(t, configDirectory, "check.md", []byte("instruction"))
+			if test.setup != nil {
+				test.setup(t, project, configDirectory)
+			}
+
+			target := test.target(project, configDirectory)
+			got := runApplicationInDirectory(t, project, environment, "", "instructions", "append", "check.md", "--target", target)
+			if got.exitCode != 1 || got.stdout != "" || got.stderr == "" {
+				t.Errorf("result = exit %d, stdout %q, stderr %q; want one target validation failure", got.exitCode, got.stdout, got.stderr)
+			}
+		})
+	}
+}
+
+func TestInstructionsAppendChecksManagedResourceOwnershipWithoutProjectMutation(t *testing.T) {
+	for _, test := range []struct {
+		name         string
+		target       string
+		ownedPath    string
+		manifest     string
+		unreadable   bool
+		wantSuccess  bool
+		wantContents string
+	}{
+		{name: "exact owned path", target: "config/tool.txt", ownedPath: "config/tool.txt"},
+		{name: "beneath owned path", target: "config/tool/notes.txt", ownedPath: "config/tool"},
+		{name: "ancestor of owned path", target: "config", ownedPath: "config/tool.txt"},
+		{name: "case-insensitive alias of owned path", target: "Config/tool.txt", ownedPath: "config/tool.txt"},
+		{name: "malformed manifest", target: "notes.txt", manifest: `{not json`},
+		{name: "unreadable manifest", target: "notes.txt", manifest: `{"version":2,"skills":[],"resources":[]}`, unreadable: true},
+		{name: "missing manifest", target: "notes.txt", wantSuccess: true, wantContents: "instruction\n"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if test.unreadable && os.Geteuid() == 0 {
+				t.Skip("root can read mode-000 manifests")
+			}
+			project := t.TempDir()
+			configDirectory := t.TempDir()
+			writeInstructionForTest(t, configDirectory, "check.md", []byte("instruction"))
+			if parent := filepath.Dir(filepath.Join(project, filepath.FromSlash(test.target))); parent != project {
+				if err := os.MkdirAll(parent, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			manifest := test.manifest
+			if test.ownedPath != "" {
+				manifest = fmt.Sprintf(`{"version":2,"skills":[],"resources":[{"name":"tooling","mode":"copy","paths":[%q]}]}`, test.ownedPath)
+			}
+			manifestPath := filepath.Join(project, ".agents", "bond-manifest.json")
+			if manifest != "" {
+				if err := os.MkdirAll(filepath.Dir(manifestPath), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(manifestPath, []byte(manifest), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if test.unreadable {
+					if err := os.Chmod(manifestPath, 0); err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() { _ = os.Chmod(manifestPath, 0o644) })
+				}
+			}
+
+			got := runApplicationInDirectory(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "instructions", "append", "check.md", "--target", test.target)
+			contents, readErr := os.ReadFile(filepath.Join(project, filepath.FromSlash(test.target)))
+			if test.wantSuccess {
+				if got.exitCode != 0 || got.stdout != "" || got.stderr != "" || readErr != nil || string(contents) != test.wantContents {
+					t.Fatalf("result = exit %d, stdout %q, stderr %q, target %q, read error %v", got.exitCode, got.stdout, got.stderr, contents, readErr)
+				}
+				return
+			}
+			if got.exitCode != 1 || got.stdout != "" || got.stderr == "" {
+				t.Errorf("result = exit %d, stdout %q, stderr %q; want ownership failure", got.exitCode, got.stdout, got.stderr)
+			}
+			if readErr == nil {
+				t.Errorf("rejected target was changed or created: %q", contents)
+			}
+		})
+	}
+}
+
+func TestInstructionsAppendPinsTheInvocationDirectoryBeforePreflight(t *testing.T) {
+	projectParent := t.TempDir()
+	project := filepath.Join(projectParent, "project")
+	if err := os.Mkdir(project, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	configDirectory := t.TempDir()
+	writeInstructionForTest(t, configDirectory, "check.md", []byte("instruction"))
+	var hookCalls int
+	dependencies := Dependencies{transactionHook: func(point string) error {
+		if point != instructionAfterPreflight {
+			return nil
+		}
+		hookCalls++
+		if err := os.Remove(project); err != nil {
+			return err
+		}
+		return os.Symlink(outside, project)
+	}}
+
+	got := runApplicationWithDependencies(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", dependencies, "instructions", "append", "check.md", "--target", "target.md")
+	if got.exitCode != 1 || got.stderr == "" || hookCalls != 1 {
+		t.Fatalf("result = exit %d, stderr %q, hook calls %d; want safe rejection", got.exitCode, got.stderr, hookCalls)
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "target.md")); !os.IsNotExist(err) {
+		t.Errorf("append escaped through replaced invocation directory: %v", err)
+	}
+}
+
+func TestInstructionsAppendRejectsAParentMovedAfterOpening(t *testing.T) {
+	project := t.TempDir()
+	outside := t.TempDir()
+	configDirectory := t.TempDir()
+	writeInstructionForTest(t, configDirectory, "check.md", []byte("instruction"))
+	parent := filepath.Join(project, "docs")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	moved := filepath.Join(outside, "docs")
+	var hookCalls int
+	dependencies := Dependencies{transactionHook: func(point string) error {
+		if point != instructionAfterParentOpen {
+			return nil
+		}
+		hookCalls++
+		return os.Rename(parent, moved)
+	}}
+
+	got := runApplicationWithDependencies(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", dependencies, "instructions", "append", "check.md", "--target", "docs/target.md")
+	if got.exitCode != 1 || got.stderr == "" || hookCalls != 1 {
+		t.Fatalf("result = exit %d, stderr %q, hook calls %d; want safe rejection", got.exitCode, got.stderr, hookCalls)
+	}
+	if _, err := os.Lstat(filepath.Join(moved, "target.md")); !os.IsNotExist(err) {
+		t.Errorf("append wrote through a parent moved outside the project: %v", err)
+	}
+}
+
+func TestInstructionsAppendDoesNotFollowAParentChangedAfterPreflight(t *testing.T) {
+	project := t.TempDir()
+	outside := t.TempDir()
+	configDirectory := t.TempDir()
+	writeInstructionForTest(t, configDirectory, "check.md", []byte("instruction"))
+	parent := filepath.Join(project, "docs")
+	if err := os.Mkdir(parent, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var hookCalls int
+	dependencies := Dependencies{transactionHook: func(point string) error {
+		if point != instructionAfterPreflight {
+			return nil
+		}
+		hookCalls++
+		if err := os.Remove(parent); err != nil {
+			return err
+		}
+		return os.Symlink(outside, parent)
+	}}
+
+	got := runApplicationWithDependencies(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", dependencies, "instructions", "append", "check.md", "--target", "docs/target.md")
+	if got.exitCode != 1 || got.stderr == "" || hookCalls != 1 {
+		t.Fatalf("result = exit %d, stderr %q, hook calls %d; want safe rejection", got.exitCode, got.stderr, hookCalls)
+	}
+	if _, err := os.Lstat(filepath.Join(outside, "target.md")); !os.IsNotExist(err) {
+		t.Errorf("append escaped through changed parent: %v", err)
 	}
 }
 
@@ -352,6 +637,35 @@ func TestInstructionsAppendHonorsContextCancellationWhileTargetIsLocked(t *testi
 	}
 	if string(contents) != "original" {
 		t.Errorf("canceled append target = %q, want unchanged", contents)
+	}
+}
+
+func TestInstructionsAppendRollbackPreservesAReplacementTarget(t *testing.T) {
+	project := t.TempDir()
+	configDirectory := t.TempDir()
+	writeInstructionForTest(t, configDirectory, "check.md", []byte("instruction"))
+	targetPath := filepath.Join(project, "target.md")
+	movedPath := filepath.Join(project, "bond-created.md")
+	dependencies := Dependencies{transactionHook: func(point string) error {
+		if point != instructionAfterWrite {
+			return nil
+		}
+		if err := os.Rename(targetPath, movedPath); err != nil {
+			return err
+		}
+		if err := os.WriteFile(targetPath, []byte("replacement"), 0o600); err != nil {
+			return err
+		}
+		return fmt.Errorf("injected replacement")
+	}}
+
+	got := runApplicationWithDependencies(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", dependencies, "instructions", "append", "check.md", "--target", "target.md")
+	if got.exitCode != 1 || got.stderr == "" {
+		t.Fatalf("result = exit %d, stderr %q; want rollback failure", got.exitCode, got.stderr)
+	}
+	contents, err := os.ReadFile(targetPath)
+	if err != nil || string(contents) != "replacement" {
+		t.Errorf("replacement target = %q, err = %v; want preserved replacement", contents, err)
 	}
 }
 
