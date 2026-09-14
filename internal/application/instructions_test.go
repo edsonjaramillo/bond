@@ -47,6 +47,25 @@ func TestInstructionsAppendCreatesDefaultTargetFromTopLevelInstruction(t *testin
 	}
 }
 
+func TestInstructionsAppendMultipleInstructionsInCommandLineOrder(t *testing.T) {
+	project := t.TempDir()
+	configDirectory := t.TempDir()
+	writeInstructionForTest(t, configDirectory, "second.md", []byte("second"))
+	writeInstructionForTest(t, configDirectory, "first.md", []byte("first"))
+
+	got := runApplicationInDirectory(t, project, []string{"XDG_CONFIG_HOME=" + configDirectory}, "", "instructions", "append", "first.md", "second.md")
+	if got.exitCode != 0 || got.stdout != "" || got.stderr != "" {
+		t.Fatalf("result = exit %d, stdout %q, stderr %q; want silent success", got.exitCode, got.stdout, got.stderr)
+	}
+	contents, err := os.ReadFile(filepath.Join(project, "AGENTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(contents) != "first\n\nsecond\n" {
+		t.Errorf("AGENTS.md = %q, want Instructions in command-line order", contents)
+	}
+}
+
 func TestInstructionsAppendSupportsGroupedInstructionPaths(t *testing.T) {
 	project := t.TempDir()
 	configDirectory := t.TempDir()
@@ -366,20 +385,16 @@ func TestBareInstructionsPrintsHelpWithOnlyAppend(t *testing.T) {
 	}
 }
 
-func TestInstructionsAppendRequiresExactlyOneInstructionPath(t *testing.T) {
+func TestInstructionsAppendRequiresAtLeastOneInstructionPath(t *testing.T) {
 	t.Parallel()
 
-	for _, arguments := range [][]string{
-		{"instructions", "append"},
-		{"instructions", "append", "one.md", "two.md"},
-	} {
-		got := runApplication(t, arguments...)
-		if got.exitCode != 1 {
-			t.Errorf("Run(%q) exit code = %d, want 1", arguments, got.exitCode)
-		}
-		if got.stdout != "" || got.stderr == "" || strings.Contains(got.stderr, "Usage:") {
-			t.Errorf("Run(%q) output = stdout %q, stderr %q; want one plain diagnostic", arguments, got.stdout, got.stderr)
-		}
+	arguments := []string{"instructions", "append"}
+	got := runApplication(t, arguments...)
+	if got.exitCode != 1 {
+		t.Errorf("Run(%q) exit code = %d, want 1", arguments, got.exitCode)
+	}
+	if got.stdout != "" || got.stderr == "" || strings.Contains(got.stderr, "Usage:") {
+		t.Errorf("Run(%q) output = stdout %q, stderr %q; want one plain diagnostic", arguments, got.stdout, got.stderr)
 	}
 }
 

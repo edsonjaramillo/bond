@@ -24,11 +24,7 @@ const (
 	instructionBeforeSync      = "instruction-before-sync"
 )
 
-func appendInstruction(command *cobra.Command, invocation Invocation, instructionPath, targetPath string) error {
-	components, err := parseInstructionPath(instructionPath)
-	if err != nil {
-		return err
-	}
+func appendInstructions(command *cobra.Command, invocation Invocation, instructionPaths []string, targetPath string) error {
 	store, err := centralCollectionPath(invocation.Environment, instructionCollection)
 	if err != nil {
 		return err
@@ -39,9 +35,17 @@ func appendInstruction(command *cobra.Command, invocation Invocation, instructio
 	} else if !os.IsNotExist(resolveErr) {
 		return fmt.Errorf("resolve Instruction Store: %w", resolveErr)
 	}
-	contents, err := readInstruction(store, components, instructionPath)
-	if err != nil {
-		return err
+	instructions := make([][]byte, 0, len(instructionPaths))
+	for _, instructionPath := range instructionPaths {
+		components, parseErr := parseInstructionPath(instructionPath)
+		if parseErr != nil {
+			return parseErr
+		}
+		contents, readErr := readInstruction(store, components, instructionPath)
+		if readErr != nil {
+			return readErr
+		}
+		instructions = append(instructions, contents)
 	}
 
 	projectRoot, projectPath, err := openInstructionProject(invocation.WorkingDirectory)
@@ -111,7 +115,7 @@ func appendInstruction(command *cobra.Command, invocation Invocation, instructio
 		return rollbackInstructionAppend(err, 0, false)
 	}
 	originalLength := int64(len(existing))
-	appendBytes := instructionAppendBytes(existing, contents)
+	appendBytes := instructionAppendAllBytes(existing, instructions)
 	if _, err := target.Seek(0, io.SeekEnd); err != nil {
 		return rollbackInstructionAppend(fmt.Errorf("seek target %q for append: %w", targetPath, err), originalLength, false)
 	}
@@ -464,6 +468,15 @@ func validateAndReadInstructionTarget(file, parent *os.File, name, path string) 
 	}
 
 	return contents, nil
+}
+
+func instructionAppendAllBytes(existing []byte, instructions [][]byte) []byte {
+	combined := append([]byte(nil), existing...)
+	for _, instruction := range instructions {
+		combined = append(combined, instructionAppendBytes(combined, instruction)...)
+	}
+
+	return combined[len(existing):]
 }
 
 func instructionAppendBytes(existing, instruction []byte) []byte {
